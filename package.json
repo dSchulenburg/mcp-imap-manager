@@ -1,0 +1,23 @@
+{
+  "name": "mcp-imap-manager",
+  "version": "1.0.0",
+  "description": "MCP Server for IMAP email operations (move, delete, list)",
+  "main": "src/server.mjs",
+  "type": "module",
+  "scripts": {
+    "dev": "node src/server.mjs",
+    "start": "node src/server.mjs"
+  },
+  "keywords": ["mcp", "imap", "email", "automation"],
+  "author": "Dirk Schulenburg",
+  "license": "ISC",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.10.2",
+    "cors": "^2.8.5",
+    "dotenv": "^17.2.3",
+    "express": "^5.0.1",
+    "imap": "^0.8.19",
+    "mailparser": "^3.7.2",
+    "zod": "^4.1.13"
+  }
+}

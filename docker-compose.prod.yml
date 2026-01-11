@@ -1,0 +1,29 @@
+version: "3.8"
+
+services:
+  imap-mcp:
+    build: .
+    container_name: imap-mcp
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      - NODE_ENV=production
+    networks:
+      - proxy
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.imap-mcp.rule=Host(`mcp-imap.dirk-schulenburg.net`)"
+      - "traefik.http.routers.imap-mcp.entrypoints=websecure"
+      - "traefik.http.routers.imap-mcp.tls.certresolver=letsencrypt"
+      - "traefik.http.services.imap-mcp.loadbalancer.server.port=8001"
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8001/health"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+
+networks:
+  proxy:
+    external: true
