@@ -120,6 +120,30 @@ function deleteEmail(imap, uid) {
 }
 
 /**
+ * Remove flags from email(s)
+ */
+function removeFlags(imap, uids, flags) {
+  return new Promise((resolve, reject) => {
+    imap.delFlags(uids, flags, (err) => {
+      if (err) reject(err);
+      else resolve({ success: true, uids, flags, action: "flags_removed" });
+    });
+  });
+}
+
+/**
+ * Add flags to email(s)
+ */
+function addFlags(imap, uids, flags) {
+  return new Promise((resolve, reject) => {
+    imap.addFlags(uids, flags, (err) => {
+      if (err) reject(err);
+      else resolve({ success: true, uids, flags, action: "flags_added" });
+    });
+  });
+}
+
+/**
  * Search emails by criteria
  */
 function searchEmails(imap, criteria) {
@@ -580,6 +604,88 @@ mcpServer.tool(
                 succeeded: successCount,
                 failed: uids.length - successCount,
                 results,
+              },
+              null,
+              2
+            ),
+          },
+        ],
+      };
+    } catch (error) {
+      if (imap) imap.end();
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify({ success: false, error: error.message }),
+          },
+        ],
+      };
+    }
+  }
+);
+
+// ----------------------------------------------------------------------------
+// Tool: imap_mark_unseen
+// ----------------------------------------------------------------------------
+mcpServer.tool(
+  "imap_mark_unseen",
+  "Mark emails as unseen/unread by removing the \\Seen flag",
+  {
+    account: z.string().describe("Account key: onecom, gmx, or gmail"),
+    folder: z.string().default("INBOX").describe("Folder containing the emails"),
+    uids: z.array(z.number()).optional().describe("Array of email UIDs to mark unseen (if not provided, marks ALL emails in folder)"),
+    all: z.boolean().default(false).describe("Mark ALL emails in folder as unseen"),
+  },
+  async ({ account, folder, uids, all }) => {
+    let imap;
+    try {
+      imap = createImapConnection(account);
+      await connectImap(imap);
+      await openMailbox(imap, folder, false);
+
+      let targetUids = uids;
+
+      // If all=true or no UIDs provided, get all emails in folder
+      if (all || !uids || uids.length === 0) {
+        targetUids = await searchEmails(imap, ["ALL"]);
+      }
+
+      if (!targetUids || targetUids.length === 0) {
+        imap.end();
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify({
+                success: true,
+                account,
+                folder,
+                message: "No emails to mark as unseen",
+                count: 0,
+              }),
+            },
+          ],
+        };
+      }
+
+      // Remove \Seen flag from all target UIDs
+      await removeFlags(imap, targetUids, ["\\Seen"]);
+
+      imap.end();
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify(
+              {
+                success: true,
+                account,
+                folder,
+                action: "marked_unseen",
+                count: targetUids.length,
+                uids: targetUids.length <= 50 ? targetUids : `${targetUids.length} emails (list truncated)`,
               },
               null,
               2
