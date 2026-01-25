@@ -20,6 +20,12 @@ export const config = {
       user: process.env.IMAP_ONECOM_USER,
       password: process.env.IMAP_ONECOM_PASSWORD,
       tls: process.env.IMAP_ONECOM_TLS !== "false",
+      // SMTP Settings
+      smtp: {
+        host: process.env.SMTP_ONECOM_HOST || "send.one.com",
+        port: Number(process.env.SMTP_ONECOM_PORT || 465),
+        secure: process.env.SMTP_ONECOM_SECURE !== "false", // true for 465, false for 587
+      },
     },
     gmx: {
       name: "GMX",
@@ -28,6 +34,12 @@ export const config = {
       user: process.env.IMAP_GMX_USER,
       password: process.env.IMAP_GMX_PASSWORD,
       tls: process.env.IMAP_GMX_TLS !== "false",
+      // SMTP Settings
+      smtp: {
+        host: process.env.SMTP_GMX_HOST || "mail.gmx.net",
+        port: Number(process.env.SMTP_GMX_PORT || 465),
+        secure: process.env.SMTP_GMX_SECURE !== "false",
+      },
     },
     gmail: {
       name: "Gmail",
@@ -36,6 +48,12 @@ export const config = {
       user: process.env.IMAP_GMAIL_USER,
       password: process.env.IMAP_GMAIL_PASSWORD,
       tls: process.env.IMAP_GMAIL_TLS !== "false",
+      // SMTP Settings
+      smtp: {
+        host: process.env.SMTP_GMAIL_HOST || "smtp.gmail.com",
+        port: Number(process.env.SMTP_GMAIL_PORT || 465),
+        secure: process.env.SMTP_GMAIL_SECURE !== "false",
+      },
     },
   },
 };

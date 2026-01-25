@@ -4,14 +4,15 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Overview
 
-This is a Model Context Protocol (MCP) server that provides IMAP email management capabilities. The server is built with Node.js/Express and uses the MCP SDK to expose IMAP operations as MCP tools. It supports multiple email accounts (one.com, GMX, Gmail) and can be deployed standalone or behind Traefik reverse proxy with automatic HTTPS.
+This is a Model Context Protocol (MCP) server that provides IMAP email management and SMTP email sending capabilities. The server is built with Node.js/Express and uses the MCP SDK to expose email operations as MCP tools. It supports multiple email accounts (one.com, GMX, Gmail) and can be deployed standalone or behind Traefik reverse proxy with automatic HTTPS.
 
 ## Architecture
 
 ### Core Components
 
 - **src/server.mjs**: Main server file that:
-  - Registers 7 MCP tools for IMAP operations (list accounts, folders, emails; move, delete operations)
+  - Registers 8 MCP tools for IMAP operations (list accounts, folders, emails; move, delete operations)
+  - Registers 1 MCP tool for SMTP operations (send email)
   - Provides HTTP endpoints for health checks, testing, and account status
   - Uses StreamableHTTPServerTransport for MCP protocol communication
   - Manages persistent IMAP connections with automatic reconnection
@@ -20,6 +21,7 @@ This is a Model Context Protocol (MCP) server that provides IMAP email managemen
 
 ### MCP Tools Registered
 
+**IMAP Tools:**
 1. **imap_list_accounts**: List all configured IMAP accounts and their connection status
 2. **imap_list_folders**: List all folders/mailboxes for a specific account
 3. **imap_list_emails**: List emails in a folder with optional search criteria (from, subject, since, before)
@@ -27,6 +29,10 @@ This is a Model Context Protocol (MCP) server that provides IMAP email managemen
 5. **imap_move_by_message_id**: Move email by Message-ID header (more reliable across sessions)
 6. **imap_delete_email**: Permanently delete an email by UID
 7. **imap_bulk_move**: Move multiple emails at once (by UIDs or Message-IDs)
+8. **imap_mark_unseen**: Mark emails as unread
+
+**SMTP Tools:**
+9. **smtp_send_email**: Send an email via SMTP (supports to, cc, bcc, subject, text/html body, replyTo)
 
 ### HTTP Endpoints
 
@@ -105,6 +111,21 @@ Copy `.env.example` to `.env` and configure:
 - `IMAP_GMAIL_PASSWORD`: App password (requires 2FA enabled)
 - `IMAP_GMAIL_TLS`: Enable TLS (default: true)
 
+**SMTP Settings (for each account):**
+- `SMTP_ONECOM_HOST`: SMTP server (default: send.one.com)
+- `SMTP_ONECOM_PORT`: SMTP port (default: 465 for SSL)
+- `SMTP_ONECOM_SECURE`: Use SSL (default: true, set false for STARTTLS on port 587)
+
+- `SMTP_GMX_HOST`: SMTP server (default: mail.gmx.net)
+- `SMTP_GMX_PORT`: SMTP port (default: 465)
+- `SMTP_GMX_SECURE`: Use SSL (default: true)
+
+- `SMTP_GMAIL_HOST`: SMTP server (default: smtp.gmail.com)
+- `SMTP_GMAIL_PORT`: SMTP port (default: 465)
+- `SMTP_GMAIL_SECURE`: Use SSL (default: true)
+
+Note: SMTP uses the same user/password credentials as IMAP for each account.
+
 ### App Password Setup
 
 **GMX:**
@@ -154,6 +175,13 @@ List emails in INBOX:
 curl -X POST http://127.0.0.1:8001/mcp \
   -H "Content-Type: application/json" \
   -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"imap_list_emails","arguments":{"account":"onecom","folder":"INBOX","limit":10}}}'
+```
+
+Send an email:
+```bash
+curl -X POST http://127.0.0.1:8001/mcp \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"smtp_send_email","arguments":{"account":"onecom","to":"recipient@example.com","subject":"Test Email","text":"Hello from IMAP MCP!"}}}'
 ```
 
 ## IMAP Operations Details

@@ -2,6 +2,7 @@ import express from "express";
 import cors from "cors";
 import Imap from "imap";
 import { simpleParser } from "mailparser";
+import nodemailer from "nodemailer";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { z } from "zod";
@@ -695,6 +696,103 @@ mcpServer.tool(
       };
     } catch (error) {
       if (imap) imap.end();
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify({ success: false, error: error.message }),
+          },
+        ],
+      };
+    }
+  }
+);
+
+// ============================================================================
+// SMTP Helper Functions
+// ============================================================================
+
+/**
+ * Create SMTP transporter for an account
+ */
+function createSmtpTransporter(accountKey) {
+  const accounts = config.accounts;
+  const account = accounts[accountKey];
+
+  if (!account || !account.user || !account.password) {
+    throw new Error(`Account '${accountKey}' not configured`);
+  }
+
+  if (!account.smtp) {
+    throw new Error(`SMTP not configured for account '${accountKey}'`);
+  }
+
+  return nodemailer.createTransport({
+    host: account.smtp.host,
+    port: account.smtp.port,
+    secure: account.smtp.secure,
+    auth: {
+      user: account.user,
+      pass: account.password,
+    },
+  });
+}
+
+// ----------------------------------------------------------------------------
+// Tool: smtp_send_email
+// ----------------------------------------------------------------------------
+mcpServer.tool(
+  "smtp_send_email",
+  "Send an email via SMTP",
+  {
+    account: z.string().describe("Account key: onecom, gmx, or gmail"),
+    to: z.string().describe("Recipient email address"),
+    subject: z.string().describe("Email subject"),
+    text: z.string().optional().describe("Plain text body"),
+    html: z.string().optional().describe("HTML body (optional, if provided will be used instead of text)"),
+    cc: z.string().optional().describe("CC recipients (comma-separated)"),
+    bcc: z.string().optional().describe("BCC recipients (comma-separated)"),
+    replyTo: z.string().optional().describe("Reply-to address"),
+  },
+  async ({ account, to, subject, text, html, cc, bcc, replyTo }) => {
+    try {
+      const transporter = createSmtpTransporter(account);
+      const accountConfig = config.accounts[account];
+
+      const mailOptions = {
+        from: `"Dirk Schulenburg" <${accountConfig.user}>`,
+        to,
+        subject,
+        text: text || "",
+        html: html || undefined,
+        cc: cc || undefined,
+        bcc: bcc || undefined,
+        replyTo: replyTo || undefined,
+      };
+
+      const info = await transporter.sendMail(mailOptions);
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify(
+              {
+                success: true,
+                account,
+                messageId: info.messageId,
+                to,
+                subject,
+                accepted: info.accepted,
+                rejected: info.rejected,
+              },
+              null,
+              2
+            ),
+          },
+        ],
+      };
+    } catch (error) {
       return {
         content: [
           {
