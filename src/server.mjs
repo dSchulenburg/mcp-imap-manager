@@ -7,10 +7,16 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { z } from "zod";
 import { config, getConfiguredAccounts } from "./config.mjs";
+import { generalLimiter, mcpLimiter, healthLimiter } from "./rate-limit.mjs";
 
 const app = express();
 app.use(cors());
 app.use(express.json());
+
+// Rate Limiting
+app.use(generalLimiter);
+app.use("/health", healthLimiter);
+app.use("/mcp", mcpLimiter);
 
 // ============================================================================
 // IMAP Helper Functions

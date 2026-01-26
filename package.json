@@ -21,6 +21,7 @@
     "cors": "^2.8.5",
     "dotenv": "^17.2.3",
     "express": "^5.0.1",
+    "express-rate-limit": "^7.5.0",
     "imap": "^0.8.19",
     "mailparser": "^3.7.2",
     "nodemailer": "^7.0.12",
