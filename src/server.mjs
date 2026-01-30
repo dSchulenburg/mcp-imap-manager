@@ -8,6 +8,7 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import { z } from "zod";
 import { config, getConfiguredAccounts } from "./config.mjs";
 import { generalLimiter, mcpLimiter, healthLimiter } from "./rate-limit.mjs";
+import { requireApiKey } from "./auth.mjs";
 
 const app = express();
 app.use(cors());
@@ -817,7 +818,12 @@ mcpServer.tool(
 
 // Health check
 app.get("/health", (req, res) => {
-  res.json({ status: "ok", service: "imap-mcp", version: "1.0.0" });
+  res.json({
+    status: "ok",
+    service: "imap-mcp",
+    version: "1.0.0",
+    timestamp: new Date().toISOString(),
+  });
 });
 
 // Version info
@@ -875,16 +881,8 @@ app.get("/test/:account", async (req, res) => {
   }
 });
 
-// MCP Endpoint
-app.all("/mcp", async (req, res) => {
-  // Check API key if configured
-  if (config.apiKey) {
-    const providedKey = req.headers["x-api-key"] || req.query.apiKey;
-    if (providedKey !== config.apiKey) {
-      return res.status(401).json({ error: "Invalid API key" });
-    }
-  }
-
+// MCP Endpoint with multi-key auth
+app.all("/mcp", requireApiKey, async (req, res) => {
   try {
     const transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: undefined,
