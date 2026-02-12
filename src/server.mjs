@@ -11,6 +11,7 @@ import { generalLimiter, mcpLimiter, healthLimiter } from "./rate-limit.mjs";
 import { requireApiKey } from "./auth.mjs";
 
 const app = express();
+app.set("trust proxy", 1); // Behind Traefik reverse proxy
 app.use(cors());
 app.use(express.json());
 
@@ -762,6 +763,7 @@ mcpServer.tool(
     replyTo: z.string().optional().describe("Reply-to address"),
   },
   async ({ account, to, subject, text, html, cc, bcc, replyTo }) => {
+    console.log(`[SMTP] Sending email to ${to} via ${account} (subject: ${subject})`);
     try {
       const transporter = createSmtpTransporter(account);
       const accountConfig = config.accounts[account];
@@ -777,7 +779,16 @@ mcpServer.tool(
         replyTo: replyTo || undefined,
       };
 
-      const info = await transporter.sendMail(mailOptions);
+      // Timeout to prevent hanging on blocked ports
+      const sendWithTimeout = Promise.race([
+        transporter.sendMail(mailOptions),
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error("SMTP timeout after 15s - check port/firewall")), 15000)
+        ),
+      ]);
+
+      const info = await sendWithTimeout;
+      console.log(`[SMTP] Email sent successfully to ${to} (messageId: ${info.messageId})`);
 
       return {
         content: [
@@ -800,6 +811,7 @@ mcpServer.tool(
         ],
       };
     } catch (error) {
+      console.error(`[SMTP] Failed to send email to ${to}: ${error.message}`);
       return {
         content: [
           {
