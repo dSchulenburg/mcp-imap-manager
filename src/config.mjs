@@ -55,6 +55,20 @@ export const config = {
         secure: process.env.SMTP_GMAIL_SECURE !== "false",
       },
     },
+    iserv: {
+      name: "IServ BS:WI",
+      host: process.env.IMAP_ISERV_HOST || "imap.bs05.hibb.hamburg",
+      port: Number(process.env.IMAP_ISERV_PORT || 993),
+      user: process.env.IMAP_ISERV_USER,
+      password: process.env.IMAP_ISERV_PASSWORD,
+      tls: process.env.IMAP_ISERV_TLS !== "false",
+      // SMTP Settings
+      smtp: {
+        host: process.env.SMTP_ISERV_HOST || "smtp.bs05.hibb.hamburg",
+        port: Number(process.env.SMTP_ISERV_PORT || 587),
+        secure: process.env.SMTP_ISERV_SECURE === "true", // false for STARTTLS on 587
+      },
+    },
   },
 };
 
