@@ -716,6 +716,101 @@ mcpServer.tool(
   }
 );
 
+// ----------------------------------------------------------------------------
+// Tool: imap_read_email
+// ----------------------------------------------------------------------------
+mcpServer.tool(
+  "imap_read_email",
+  "Read the full content of an email by UID (body, headers, attachments info)",
+  {
+    account: z.string().describe("Account key: onecom, gmx, or gmail"),
+    folder: z.string().default("INBOX").describe("Folder containing the email"),
+    uid: z.number().describe("Email UID to read"),
+  },
+  async ({ account, folder, uid }) => {
+    let imap;
+    try {
+      imap = createImapConnection(account);
+      await connectImap(imap);
+      await openMailbox(imap, folder, true);
+
+      // Fetch the full email (headers + body)
+      const rawEmail = await new Promise((resolve, reject) => {
+        const fetch = imap.fetch([uid], { bodies: "", struct: true });
+        let emailBuffer = "";
+
+        fetch.on("message", (msg) => {
+          msg.on("body", (stream) => {
+            stream.on("data", (chunk) => (emailBuffer += chunk.toString("utf8")));
+          });
+        });
+
+        fetch.once("error", (err) => reject(err));
+        fetch.once("end", () => resolve(emailBuffer));
+      });
+
+      if (!rawEmail) {
+        imap.end();
+        return {
+          content: [{
+            type: "text",
+            text: JSON.stringify({ success: false, error: `Email with UID ${uid} not found in ${folder}` }),
+          }],
+        };
+      }
+
+      // Parse with mailparser
+      const parsed = await simpleParser(rawEmail);
+
+      imap.end();
+
+      // Build response with text body, HTML body, and attachment metadata
+      const result = {
+        success: true,
+        account,
+        folder,
+        uid,
+        from: parsed.from?.text || "",
+        to: parsed.to?.text || "",
+        cc: parsed.cc?.text || "",
+        subject: parsed.subject || "",
+        date: parsed.date?.toISOString() || "",
+        messageId: parsed.messageId || "",
+        text: parsed.text || "",
+        html: parsed.html || "",
+        attachments: (parsed.attachments || []).map((a) => ({
+          filename: a.filename,
+          contentType: a.contentType,
+          size: a.size,
+        })),
+      };
+
+      // Truncate very large bodies to avoid overwhelming responses
+      if (result.text.length > 50000) {
+        result.text = result.text.substring(0, 50000) + "\n\n[... truncated, total length: " + parsed.text.length + " chars]";
+      }
+      if (result.html && result.html.length > 50000) {
+        result.html = result.html.substring(0, 50000) + "\n\n[... truncated]";
+      }
+
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify(result, null, 2),
+        }],
+      };
+    } catch (error) {
+      if (imap) imap.end();
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify({ success: false, error: error.message }),
+        }],
+      };
+    }
+  }
+);
+
 // ============================================================================
 // SMTP Helper Functions
 // ============================================================================
