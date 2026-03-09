@@ -41,7 +41,7 @@ function createImapConnection(accountKey) {
     host: account.host,
     port: account.port,
     tls: account.tls,
-    tlsOptions: { rejectUnauthorized: false },
+    tlsOptions: { rejectUnauthorized: (process.env.IMAP_REJECT_UNAUTHORIZED || "true") === "true" },
   });
 }
 
@@ -939,12 +939,12 @@ app.get("/version", (req, res) => {
     name: "imap-mcp",
     version: "1.0.0",
     node: process.version,
-    accounts: getConfiguredAccounts().map((a) => a.key),
+    accounts: getConfiguredAccounts().length,
   });
 });
 
 // List configured accounts
-app.get("/accounts", (req, res) => {
+app.get("/accounts", requireApiKey, (req, res) => {
   const accounts = getConfiguredAccounts();
   res.json({
     success: true,
@@ -958,7 +958,7 @@ app.get("/accounts", (req, res) => {
 });
 
 // Test connection to an account
-app.get("/test/:account", async (req, res) => {
+app.get("/test/:account", requireApiKey, async (req, res) => {
   const { account } = req.params;
   let imap;
 
