@@ -65,8 +65,22 @@ export const config = {
       // SMTP Settings
       smtp: {
         host: process.env.SMTP_ISERV_HOST || "smtp.mail.schuldock.de",
-        port: Number(process.env.SMTP_ISERV_PORT || 465),
-        secure: process.env.SMTP_ISERV_SECURE !== "false", // true for SSL on 465
+        port: Number(process.env.SMTP_ISERV_PORT || 587),
+        secure: process.env.SMTP_ISERV_SECURE === "true", // false for STARTTLS on 587
+      },
+    },
+    ms365: {
+      name: "MS365 BS:WI",
+      host: process.env.IMAP_MS365_HOST || "outlook.office365.com",
+      port: Number(process.env.IMAP_MS365_PORT || 993),
+      user: process.env.IMAP_MS365_USER,
+      password: process.env.IMAP_MS365_PASSWORD,
+      tls: process.env.IMAP_MS365_TLS !== "false",
+      // SMTP Settings
+      smtp: {
+        host: process.env.SMTP_MS365_HOST || "smtp.office365.com",
+        port: Number(process.env.SMTP_MS365_PORT || 587),
+        secure: process.env.SMTP_MS365_SECURE === "true", // false for STARTTLS on 587
       },
     },
   },
