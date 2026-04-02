@@ -12,7 +12,12 @@ import { requireApiKey } from "./auth.mjs";
 
 const app = express();
 app.set("trust proxy", 1); // Behind Traefik reverse proxy
-app.use(cors());
+app.use(cors({
+  origin: ['https://claude.ai', 'https://claude.desktop'],
+  credentials: true,
+  methods: ['GET', 'POST', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'x-api-key', 'Authorization']
+}));
 app.use(express.json());
 
 // Rate Limiting
@@ -991,6 +996,11 @@ app.get("/test/:account", requireApiKey, async (req, res) => {
 // MCP Endpoint with multi-key auth
 app.all("/mcp", requireApiKey, async (req, res) => {
   try {
+    // Audit: log tool calls with username
+    if (req.body?.method === 'tools/call') {
+      console.log(`[Tool] ${req.apiUser || 'unknown'} called ${req.body.params?.name || 'unknown'}`);
+    }
+
     const transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: undefined,
     });
