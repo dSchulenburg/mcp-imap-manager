@@ -36,6 +36,12 @@ function parseApiKeys() {
 
 const apiKeys = parseApiKeys();
 
+// Production: kein Betrieb ohne API Keys
+if (apiKeys.size === 0 && process.env.NODE_ENV === 'production') {
+  console.error('[Auth] FATAL: Keine API Keys konfiguriert in Production. Server wird beendet.');
+  process.exit(1);
+}
+
 export function requireApiKey(req, res, next) {
   // Wenn keine Keys konfiguriert: offen (dev)
   if (apiKeys.size === 0) {
@@ -43,8 +49,8 @@ export function requireApiKey(req, res, next) {
     return next();
   }
 
-  // Key aus Header oder Query (standardisiert auf api_key)
-  const got = req.get("x-api-key") || req.query.api_key;
+  // Key nur aus Header (nicht Query — Query-Params landen in Logs/Referrern)
+  const got = req.get("x-api-key");
 
   if (!got) {
     return res.status(401).json({ ok: false, error: "unauthorized", message: "API key required" });
