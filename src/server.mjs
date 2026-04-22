@@ -269,7 +269,7 @@ mcpServer.tool(
   "imap_list_folders",
   "List all folders/mailboxes for an IMAP account",
   {
-    account: z.string().describe("Account key: onecom, gmx, or gmail"),
+    account: z.string().describe("Account key: onecom, post, gmx, gmail, iserv, or ms365"),
   },
   async ({ account }) => {
     let imap;
@@ -320,7 +320,7 @@ mcpServer.tool(
   "imap_list_emails",
   "List emails in a folder",
   {
-    account: z.string().describe("Account key: onecom, gmx, or gmail"),
+    account: z.string().describe("Account key: onecom, post, gmx, gmail, iserv, or ms365"),
     folder: z.string().default("INBOX").describe("Folder name (default: INBOX)"),
     limit: z.number().default(20).describe("Max number of emails to return"),
     criteria: z
@@ -392,7 +392,7 @@ mcpServer.tool(
   "imap_move_email",
   "Move an email to another folder",
   {
-    account: z.string().describe("Account key: onecom, gmx, or gmail"),
+    account: z.string().describe("Account key: onecom, post, gmx, gmail, iserv, or ms365"),
     sourceFolder: z.string().default("INBOX").describe("Source folder"),
     uid: z.number().describe("Email UID to move"),
     targetFolder: z.string().describe("Target folder path"),
@@ -448,7 +448,7 @@ mcpServer.tool(
   "imap_move_by_message_id",
   "Move an email by Message-ID to another folder",
   {
-    account: z.string().describe("Account key: onecom, gmx, or gmail"),
+    account: z.string().describe("Account key: onecom, post, gmx, gmail, iserv, or ms365"),
     sourceFolder: z.string().default("INBOX").describe("Source folder"),
     messageId: z.string().describe("Email Message-ID header"),
     targetFolder: z.string().describe("Target folder path"),
@@ -524,7 +524,7 @@ mcpServer.tool(
   "imap_delete_email",
   "Delete an email (marks as deleted and expunges)",
   {
-    account: z.string().describe("Account key: onecom, gmx, or gmail"),
+    account: z.string().describe("Account key: onecom, post, gmx, gmail, iserv, or ms365"),
     folder: z.string().default("INBOX").describe("Folder containing the email"),
     uid: z.number().describe("Email UID to delete"),
   },
@@ -578,7 +578,7 @@ mcpServer.tool(
   "imap_bulk_move",
   "Move multiple emails to a folder",
   {
-    account: z.string().describe("Account key: onecom, gmx, or gmail"),
+    account: z.string().describe("Account key: onecom, post, gmx, gmail, iserv, or ms365"),
     sourceFolder: z.string().default("INBOX").describe("Source folder"),
     uids: z.array(z.number()).describe("Array of email UIDs to move"),
     targetFolder: z.string().describe("Target folder path"),
@@ -646,7 +646,7 @@ mcpServer.tool(
   "imap_mark_unseen",
   "Mark emails as unseen/unread by removing the \\Seen flag",
   {
-    account: z.string().describe("Account key: onecom, gmx, or gmail"),
+    account: z.string().describe("Account key: onecom, post, gmx, gmail, iserv, or ms365"),
     folder: z.string().default("INBOX").describe("Folder containing the emails"),
     uids: z.array(z.number()).optional().describe("Array of email UIDs to mark unseen (if not provided, marks ALL emails in folder)"),
     all: z.boolean().default(false).describe("Mark ALL emails in folder as unseen"),
@@ -728,7 +728,7 @@ mcpServer.tool(
   "imap_read_email",
   "Read the full content of an email by UID (body, headers, attachments info)",
   {
-    account: z.string().describe("Account key: onecom, gmx, or gmail"),
+    account: z.string().describe("Account key: onecom, post, gmx, gmail, iserv, or ms365"),
     folder: z.string().default("INBOX").describe("Folder containing the email"),
     uid: z.number().describe("Email UID to read"),
   },
@@ -853,7 +853,7 @@ mcpServer.tool(
   "smtp_send_email",
   "Send an email via SMTP",
   {
-    account: z.string().describe("Account key: onecom, gmx, or gmail"),
+    account: z.string().describe("Account key: onecom, post, gmx, gmail, iserv, or ms365"),
     to: z.string().describe("Recipient email address"),
     subject: z.string().describe("Email subject"),
     text: z.string().optional().describe("Plain text body"),

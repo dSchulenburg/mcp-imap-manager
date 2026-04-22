@@ -83,6 +83,20 @@ export const config = {
         secure: process.env.SMTP_MS365_SECURE === "true", // false for STARTTLS on 587
       },
     },
+    post: {
+      name: "one.com (post)",
+      host: process.env.IMAP_POST_HOST || "imap.one.com",
+      port: Number(process.env.IMAP_POST_PORT || 993),
+      user: process.env.IMAP_POST_USER,
+      password: process.env.IMAP_POST_PASSWORD,
+      tls: process.env.IMAP_POST_TLS !== "false",
+      // SMTP Settings
+      smtp: {
+        host: process.env.SMTP_POST_HOST || "send.one.com",
+        port: Number(process.env.SMTP_POST_PORT || 465),
+        secure: process.env.SMTP_POST_SECURE !== "false",
+      },
+    },
   },
 };
 
