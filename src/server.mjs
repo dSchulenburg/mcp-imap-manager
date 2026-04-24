@@ -816,6 +816,121 @@ mcpServer.tool(
   }
 );
 
+// ----------------------------------------------------------------------------
+// Folder creation helpers
+// ----------------------------------------------------------------------------
+function createMailboxIfMissing(imap, name) {
+  return new Promise((resolve) => {
+    imap.addBox(name, (err) => {
+      if (!err) return resolve({ name, created: true, alreadyExists: false });
+      const msg = err.message || String(err);
+      if (/already exists|ALREADYEXISTS/i.test(msg)) {
+        return resolve({ name, created: false, alreadyExists: true });
+      }
+      resolve({ name, created: false, alreadyExists: false, error: msg });
+    });
+  });
+}
+
+function expandFolderPaths(paths, delimiter) {
+  const all = new Set();
+  for (const path of paths) {
+    const parts = path.split(delimiter);
+    for (let i = 1; i <= parts.length; i++) {
+      all.add(parts.slice(0, i).join(delimiter));
+    }
+  }
+  return [...all].sort(
+    (a, b) => a.split(delimiter).length - b.split(delimiter).length
+  );
+}
+
+// ----------------------------------------------------------------------------
+// Tool: imap_create_folder
+// ----------------------------------------------------------------------------
+mcpServer.tool(
+  "imap_create_folder",
+  "Create a single IMAP folder/mailbox. Use delimiter-separated paths (e.g. 'INBOX.Ablage.Finanzamt' for one.com). Returns success even if folder already exists.",
+  {
+    account: z.string().describe("Account key: onecom, post, gmx, gmail, iserv, or ms365"),
+    folderPath: z.string().describe("Full folder path (e.g. 'INBOX.Ablage.Finanzamt')"),
+  },
+  async ({ account, folderPath }) => {
+    let imap;
+    try {
+      imap = createImapConnection(account);
+      await connectImap(imap);
+      const result = await createMailboxIfMissing(imap, folderPath);
+      imap.end();
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify({ success: !result.error, ...result }, null, 2),
+        }],
+      };
+    } catch (error) {
+      if (imap) imap.end();
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify({ success: false, error: error.message }),
+        }],
+      };
+    }
+  }
+);
+
+// ----------------------------------------------------------------------------
+// Tool: imap_create_folder_tree
+// ----------------------------------------------------------------------------
+mcpServer.tool(
+  "imap_create_folder_tree",
+  "Create multiple IMAP folders at once. Parent folders are auto-created. Delimiter defaults to '.' (one.com) — use '/' for Gmail.",
+  {
+    account: z.string().describe("Account key: onecom, post, gmx, gmail, iserv, or ms365"),
+    paths: z.array(z.string()).describe("List of folder paths (leaf paths — parents are auto-created)"),
+    delimiter: z.string().optional().describe("Path delimiter (default: '.')"),
+  },
+  async ({ account, paths, delimiter }) => {
+    const delim = delimiter || ".";
+    let imap;
+    try {
+      imap = createImapConnection(account);
+      await connectImap(imap);
+      const expanded = expandFolderPaths(paths, delim);
+      const results = [];
+      for (const name of expanded) {
+        results.push(await createMailboxIfMissing(imap, name));
+      }
+      imap.end();
+      const created = results.filter((r) => r.created).length;
+      const existed = results.filter((r) => r.alreadyExists).length;
+      const failed = results.filter((r) => r.error);
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            success: failed.length === 0,
+            total: results.length,
+            created,
+            existed,
+            failed: failed.length,
+            results,
+          }, null, 2),
+        }],
+      };
+    } catch (error) {
+      if (imap) imap.end();
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify({ success: false, error: error.message }),
+        }],
+      };
+    }
+  }
+);
+
 // ============================================================================
 // SMTP Helper Functions
 // ============================================================================
@@ -847,11 +962,32 @@ function createSmtpTransporter(accountKey) {
 }
 
 // ----------------------------------------------------------------------------
+// Signature helpers
+// ----------------------------------------------------------------------------
+function appendTextSignature(body, signature) {
+  if (!signature) return body || "";
+  const base = body || "";
+  const sep = base.endsWith("\n") ? "\n" : "\n\n";
+  return `${base}${sep}-- \n${signature}`;
+}
+
+function appendHtmlSignature(body, signature) {
+  if (!signature) return body;
+  const sigHtml = signature
+    .split("\n")
+    .map((line) => line.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"))
+    .join("<br>");
+  const block = `<div style="color:#666;font-family:Arial,sans-serif;font-size:10pt;margin-top:1.5em;border-top:1px solid #ccc;padding-top:0.5em">${sigHtml}</div>`;
+  if (!body) return block;
+  return `${body}${block}`;
+}
+
+// ----------------------------------------------------------------------------
 // Tool: smtp_send_email
 // ----------------------------------------------------------------------------
 mcpServer.tool(
   "smtp_send_email",
-  "Send an email via SMTP",
+  "Send an email via SMTP. Signature is auto-appended when account.signature is configured (set SIGNATURE_<ACCOUNT> env var). Use noSignature=true to suppress.",
   {
     account: z.string().describe("Account key: onecom, post, gmx, gmail, iserv, or ms365"),
     to: z.string().describe("Recipient email address"),
@@ -861,19 +997,21 @@ mcpServer.tool(
     cc: z.string().optional().describe("CC recipients (comma-separated)"),
     bcc: z.string().optional().describe("BCC recipients (comma-separated)"),
     replyTo: z.string().optional().describe("Reply-to address"),
+    noSignature: z.boolean().optional().describe("Suppress auto-appended signature (default: false)"),
   },
-  async ({ account, to, subject, text, html, cc, bcc, replyTo }) => {
+  async ({ account, to, subject, text, html, cc, bcc, replyTo, noSignature }) => {
     console.log(`[SMTP] Sending email to ${to} via ${account} (subject: ${subject})`);
     try {
       const transporter = createSmtpTransporter(account);
       const accountConfig = config.accounts[account];
+      const signature = !noSignature ? accountConfig.signature : null;
 
       const mailOptions = {
         from: `"Dirk Schulenburg" <${accountConfig.user}>`,
         to,
         subject,
-        text: text || "",
-        html: html || undefined,
+        text: appendTextSignature(text, signature),
+        html: html ? appendHtmlSignature(html, signature) : undefined,
         cc: cc || undefined,
         bcc: bcc || undefined,
         replyTo: replyTo || undefined,

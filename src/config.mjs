@@ -20,6 +20,7 @@ export const config = {
       user: process.env.IMAP_ONECOM_USER,
       password: process.env.IMAP_ONECOM_PASSWORD,
       tls: process.env.IMAP_ONECOM_TLS !== "false",
+      signature: process.env.SIGNATURE_ONECOM,
       // SMTP Settings
       smtp: {
         host: process.env.SMTP_ONECOM_HOST || "send.one.com",
@@ -90,6 +91,7 @@ export const config = {
       user: process.env.IMAP_POST_USER,
       password: process.env.IMAP_POST_PASSWORD,
       tls: process.env.IMAP_POST_TLS !== "false",
+      signature: process.env.SIGNATURE_POST,
       // SMTP Settings
       smtp: {
         host: process.env.SMTP_POST_HOST || "send.one.com",
