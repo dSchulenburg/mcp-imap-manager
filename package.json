@@ -6,7 +6,8 @@
   "type": "module",
   "scripts": {
     "dev": "node src/server.mjs",
-    "start": "node src/server.mjs"
+    "start": "node src/server.mjs",
+    "test": "node --test test/"
   },
   "keywords": [
     "mcp",

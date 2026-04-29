@@ -9,6 +9,14 @@ import { z } from "zod";
 import { config, getConfiguredAccounts } from "./config.mjs";
 import { generalLimiter, mcpLimiter, healthLimiter } from "./rate-limit.mjs";
 import { requireApiKey } from "./auth.mjs";
+import {
+  buildAttachments,
+  ensureReplyPrefix,
+  buildReferences,
+  buildQuoteText,
+  buildQuoteHtml,
+  pickReplyRecipients,
+} from "./email-helpers.mjs";
 
 const app = express();
 app.set("trust proxy", 1); // Behind Traefik reverse proxy
@@ -961,6 +969,18 @@ function createSmtpTransporter(accountKey) {
   });
 }
 
+const attachmentSchema = z
+  .array(
+    z.object({
+      filename: z.string().describe("Filename shown in the email"),
+      path: z.string().optional().describe("Absolute path on server FS (must be under ATTACHMENT_WHITELIST_DIRS)"),
+      content: z.string().optional().describe("Base64-encoded file content (alternative to path)"),
+      contentType: z.string().optional().describe("MIME type (auto-detected from filename if omitted)"),
+    })
+  )
+  .optional()
+  .describe("Optional file attachments. Each entry needs 'filename' plus either 'path' (whitelisted) or base64 'content'.");
+
 // ----------------------------------------------------------------------------
 // Signature helpers
 // ----------------------------------------------------------------------------
@@ -987,7 +1007,7 @@ function appendHtmlSignature(body, signature) {
 // ----------------------------------------------------------------------------
 mcpServer.tool(
   "smtp_send_email",
-  "Send an email via SMTP. Signature is auto-appended when account.signature is configured (set SIGNATURE_<ACCOUNT> env var). Use noSignature=true to suppress.",
+  "Send an email via SMTP. Signature is auto-appended when account.signature is configured (set SIGNATURE_<ACCOUNT> env var). Use noSignature=true to suppress. For replies that should stay in-thread, use smtp_reply instead.",
   {
     account: z.string().describe("Account key: onecom, post, gmx, gmail, iserv, or ms365"),
     to: z.string().describe("Recipient email address"),
@@ -998,10 +1018,12 @@ mcpServer.tool(
     bcc: z.string().optional().describe("BCC recipients (comma-separated)"),
     replyTo: z.string().optional().describe("Reply-to address"),
     noSignature: z.boolean().optional().describe("Suppress auto-appended signature (default: false)"),
+    attachments: attachmentSchema,
   },
-  async ({ account, to, subject, text, html, cc, bcc, replyTo, noSignature }) => {
+  async ({ account, to, subject, text, html, cc, bcc, replyTo, noSignature, attachments }) => {
     console.log(`[SMTP] Sending email to ${to} via ${account} (subject: ${subject})`);
     try {
+      const builtAttachments = buildAttachments(attachments);
       const transporter = createSmtpTransporter(account);
       const accountConfig = config.accounts[account];
       const signature = !noSignature ? accountConfig.signature : null;
@@ -1015,6 +1037,7 @@ mcpServer.tool(
         cc: cc || undefined,
         bcc: bcc || undefined,
         replyTo: replyTo || undefined,
+        attachments: builtAttachments,
       };
 
       // Timeout to prevent hanging on blocked ports
@@ -1026,7 +1049,7 @@ mcpServer.tool(
       ]);
 
       const info = await sendWithTimeout;
-      console.log(`[SMTP] Email sent successfully to ${to} (messageId: ${info.messageId})`);
+      console.log(`[SMTP] Email sent successfully to ${to} (messageId: ${info.messageId}, attachments: ${builtAttachments?.length || 0})`);
 
       return {
         content: [
@@ -1041,6 +1064,7 @@ mcpServer.tool(
                 subject,
                 accepted: info.accepted,
                 rejected: info.rejected,
+                attachmentsCount: builtAttachments?.length || 0,
               },
               null,
               2
@@ -1050,6 +1074,155 @@ mcpServer.tool(
       };
     } catch (error) {
       console.error(`[SMTP] Failed to send email to ${to}: ${error.message}`);
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify({ success: false, error: error.message }),
+          },
+        ],
+      };
+    }
+  }
+);
+
+async function fetchOriginalForReply(account, folder, uid) {
+  const imap = createImapConnection(account);
+  try {
+    await connectImap(imap);
+    await openMailbox(imap, folder, true);
+
+    const rawEmail = await new Promise((resolve, reject) => {
+      const fetch = imap.fetch([uid], { bodies: "", struct: true });
+      let buf = "";
+      let found = false;
+      fetch.on("message", (msg) => {
+        found = true;
+        msg.on("body", (stream) => {
+          stream.on("data", (chunk) => (buf += chunk.toString("utf8")));
+        });
+      });
+      fetch.once("error", reject);
+      fetch.once("end", () => (found ? resolve(buf) : reject(new Error(`Email UID ${uid} not found in ${folder}`))));
+    });
+
+    const parsed = await simpleParser(rawEmail);
+    return parsed;
+  } finally {
+    try { imap.end(); } catch {}
+  }
+}
+
+// ----------------------------------------------------------------------------
+// Tool: smtp_reply
+// ----------------------------------------------------------------------------
+mcpServer.tool(
+  "smtp_reply",
+  "Reply to an existing email keeping the IMAP thread intact (sets In-Reply-To + References, prefixes subject with AW:, optionally quotes the original). Reads the original via IMAP using replyToUid.",
+  {
+    account: z.string().describe("SMTP account to send from (e.g. onecom, post, iserv, ms365)"),
+    sourceAccount: z.string().optional().describe("IMAP account to read the original from (defaults to 'account')"),
+    sourceFolder: z.string().default("INBOX").describe("Folder containing the original mail"),
+    replyToUid: z.number().describe("UID of the original email in sourceFolder"),
+    text: z.string().optional().describe("Reply body (plain text). Quoted original is appended below if quoteOriginal=true."),
+    html: z.string().optional().describe("Reply body (HTML). If provided, used instead of text."),
+    to: z.string().optional().describe("Override recipient. Default: original sender (parsed.from)."),
+    cc: z.string().optional().describe("CC override (comma-separated)"),
+    bcc: z.string().optional().describe("BCC (comma-separated)"),
+    replyAll: z.boolean().default(false).describe("If true and 'to' is empty: reply to original 'from' + 'to' + 'cc' (minus self)"),
+    quoteOriginal: z.boolean().default(true).describe("Append the quoted original below the reply body (default: true)"),
+    subject: z.string().optional().describe("Override subject (default: 'AW: <original subject>')"),
+    noSignature: z.boolean().optional().describe("Suppress auto-appended signature"),
+    attachments: attachmentSchema,
+  },
+  async ({ account, sourceAccount, sourceFolder, replyToUid, text, html, to, cc, bcc, replyAll, quoteOriginal, subject, noSignature, attachments }) => {
+    const imapAccount = sourceAccount || account;
+    console.log(`[SMTP] Reply via ${account} to UID ${replyToUid} in ${imapAccount}/${sourceFolder}`);
+    try {
+      const builtAttachments = buildAttachments(attachments);
+      const parsed = await fetchOriginalForReply(imapAccount, sourceFolder, replyToUid);
+
+      const accountConfig = config.accounts[account];
+      const selfAddr = (accountConfig.user || "").toLowerCase();
+
+      let recipientTo = to;
+      let recipientCc = cc;
+      if (!recipientTo) {
+        const picked = pickReplyRecipients(parsed, { replyAll, selfAddress: selfAddr });
+        recipientTo = picked.to;
+        if (!recipientCc && picked.cc) recipientCc = picked.cc;
+      }
+
+      if (!recipientTo) {
+        throw new Error("Could not determine recipient — original mail has no parseable 'from' and no 'to' override given");
+      }
+
+      const finalSubject = subject || ensureReplyPrefix(parsed.subject || "");
+      const references = buildReferences(parsed.references, parsed.messageId);
+      const inReplyTo = parsed.messageId || undefined;
+
+      let bodyText = text || "";
+      let bodyHtml = html || undefined;
+      if (quoteOriginal) {
+        if (bodyHtml) {
+          bodyHtml = bodyHtml + buildQuoteHtml(parsed);
+        } else {
+          bodyText = bodyText + buildQuoteText(parsed);
+        }
+      }
+
+      const transporter = createSmtpTransporter(account);
+      const signature = !noSignature ? accountConfig.signature : null;
+
+      const mailOptions = {
+        from: `"Dirk Schulenburg" <${accountConfig.user}>`,
+        to: recipientTo,
+        subject: finalSubject,
+        text: appendTextSignature(bodyText, signature),
+        html: bodyHtml ? appendHtmlSignature(bodyHtml, signature) : undefined,
+        cc: recipientCc || undefined,
+        bcc: bcc || undefined,
+        inReplyTo,
+        references: references || undefined,
+        attachments: builtAttachments,
+      };
+
+      const sendWithTimeout = Promise.race([
+        transporter.sendMail(mailOptions),
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error("SMTP timeout after 15s - check port/firewall")), 15000)
+        ),
+      ]);
+
+      const info = await sendWithTimeout;
+      console.log(`[SMTP] Reply sent to ${recipientTo} (messageId: ${info.messageId}, inReplyTo: ${inReplyTo})`);
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify(
+              {
+                success: true,
+                account,
+                messageId: info.messageId,
+                to: recipientTo,
+                cc: recipientCc || null,
+                subject: finalSubject,
+                inReplyTo: inReplyTo || null,
+                references: references || null,
+                accepted: info.accepted,
+                rejected: info.rejected,
+                attachmentsCount: builtAttachments?.length || 0,
+              },
+              null,
+              2
+            ),
+          },
+        ],
+      };
+    } catch (error) {
+      console.error(`[SMTP] Reply failed: ${error.message}`);
       return {
         content: [
           {

@@ -11,13 +11,14 @@ This is a Model Context Protocol (MCP) server that provides IMAP email managemen
 ### Core Components
 
 - **src/server.mjs**: Main server file that:
-  - Registers 8 MCP tools for IMAP operations (list accounts, folders, emails; move, delete operations)
-  - Registers 1 MCP tool for SMTP operations (send email)
+  - Registers MCP tools for IMAP and SMTP operations
   - Provides HTTP endpoints for health checks, testing, and account status
   - Uses StreamableHTTPServerTransport for MCP protocol communication
   - Manages persistent IMAP connections with automatic reconnection
 
 - **src/config.mjs**: Environment variable loader for IMAP account credentials and server settings
+
+- **src/email-helpers.mjs**: Pure helpers for attachment whitelist enforcement, reply-thread headers (In-Reply-To / References), reply-prefix normalization, quote rendering, and reply-recipient picking. Unit-tested via `npm test`.
 
 ### MCP Tools Registered
 
@@ -32,7 +33,17 @@ This is a Model Context Protocol (MCP) server that provides IMAP email managemen
 8. **imap_mark_unseen**: Mark emails as unread
 
 **SMTP Tools:**
-9. **smtp_send_email**: Send an email via SMTP (supports to, cc, bcc, subject, text/html body, replyTo)
+9. **smtp_send_email**: Send an email via SMTP (supports to, cc, bcc, subject, text/html body, replyTo, attachments)
+10. **smtp_reply**: Reply to an existing email keeping the IMAP thread intact. Reads the original via IMAP using `replyToUid`, sets `In-Reply-To` + `References` headers, prefixes the subject with `AW:` (unless already prefixed), optionally quotes the original, and supports replyAll + attachments.
+
+### Attachments
+
+Both `smtp_send_email` and `smtp_reply` accept an optional `attachments` array. Each entry needs:
+- `filename` (required) — name shown in the email
+- exactly one of `path` (absolute server path, must lie under `ATTACHMENT_WHITELIST_DIRS`) or `content` (base64-encoded payload)
+- optional `contentType` (auto-detected from filename if omitted)
+
+`ATTACHMENT_WHITELIST_DIRS` is a comma-separated list of absolute directories. Empty/unset means the `path` form is rejected — only base64 `content` works in that case. This guards against arbitrary file reads via the MCP.
 
 ### HTTP Endpoints
 
@@ -183,6 +194,29 @@ curl -X POST http://127.0.0.1:8001/mcp \
   -H "Content-Type: application/json" \
   -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"smtp_send_email","arguments":{"account":"onecom","to":"recipient@example.com","subject":"Test Email","text":"Hello from IMAP MCP!"}}}'
 ```
+
+Send an email with PDF attachment (base64):
+```bash
+B64=$(base64 -w0 /path/to/profile.pdf)
+curl -X POST http://127.0.0.1:8001/mcp \
+  -H "Content-Type: application/json" \
+  -d "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"smtp_send_email\",\"arguments\":{\"account\":\"onecom\",\"to\":\"recipient@example.com\",\"subject\":\"Profil\",\"text\":\"Anbei mein Profil.\",\"attachments\":[{\"filename\":\"profil.pdf\",\"content\":\"$B64\",\"contentType\":\"application/pdf\"}]}}}"
+```
+
+Reply to an existing email (UID 1234 in INBOX) keeping the thread intact:
+```bash
+curl -X POST http://127.0.0.1:8001/mcp \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"smtp_reply","arguments":{"account":"onecom","sourceFolder":"INBOX","replyToUid":1234,"text":"Vielen Dank für die Rückmeldung — ich melde mich Mittwoch.","quoteOriginal":true}}}'
+```
+
+### Running the unit tests
+
+```bash
+npm test
+```
+
+Pure helpers (attachment validation, reply-prefix, references, recipient picking) are covered. IMAP/SMTP I/O is exercised via the manual smoketest endpoints below.
 
 ## IMAP Operations Details
 
