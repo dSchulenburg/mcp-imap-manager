@@ -232,11 +232,24 @@ function fetchEmails(imap, uids, options = {}) {
 // ============================================================================
 // MCP Server Setup
 // ============================================================================
+//
+// SDK 1.x: one McpServer instance can only attach to a single transport at a
+// time. We run StreamableHTTP stateless (sessionIdGenerator: undefined), so
+// build a fresh server + transport per /mcp request — otherwise the second
+// request throws "Already connected to a transport". Tool registrations are
+// wrapped in registerTools() which buildMcpServer() invokes on a new instance.
+// ============================================================================
 
-const mcpServer = new McpServer({
-  name: "imap-mcp",
-  version: "1.0.0",
-});
+function buildMcpServer() {
+  const mcpServer = new McpServer({
+    name: "imap-mcp",
+    version: "1.0.0",
+  });
+  registerTools(mcpServer);
+  return mcpServer;
+}
+
+function registerTools(mcpServer) {
 
 // ----------------------------------------------------------------------------
 // Tool: imap_list_accounts
@@ -1235,6 +1248,8 @@ mcpServer.tool(
   }
 );
 
+} // end registerTools()
+
 // ============================================================================
 // HTTP Endpoints
 // ============================================================================
@@ -1304,22 +1319,29 @@ app.get("/test/:account", requireApiKey, async (req, res) => {
   }
 });
 
-// MCP Endpoint with multi-key auth
+// MCP Endpoint with multi-key auth.
+// Per-request McpServer + transport — see buildMcpServer() comment above.
 app.all("/mcp", requireApiKey, async (req, res) => {
+  const reqServer = buildMcpServer();
+  const transport = new StreamableHTTPServerTransport({
+    sessionIdGenerator: undefined,
+  });
+  res.on("close", async () => {
+    try { await transport.close?.(); } catch {}
+    try { await reqServer.close?.(); } catch {}
+  });
   try {
     // Audit: log tool calls with username
     if (req.body?.method === 'tools/call') {
       console.log(`[Tool] ${req.apiUser || 'unknown'} called ${req.body.params?.name || 'unknown'}`);
     }
-
-    const transport = new StreamableHTTPServerTransport({
-      sessionIdGenerator: undefined,
-    });
-    await mcpServer.connect(transport);
+    await reqServer.connect(transport);
     await transport.handleRequest(req, res, req.body);
   } catch (error) {
     console.error("MCP error:", error);
-    res.status(500).json({ error: error.message });
+    if (!res.headersSent) {
+      res.status(500).json({ error: error.message });
+    }
   }
 });
 
