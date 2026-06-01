@@ -54,7 +54,12 @@ function createImapConnection(accountKey) {
     host: account.host,
     port: account.port,
     tls: account.tls,
-    tlsOptions: { rejectUnauthorized: (process.env.IMAP_REJECT_UNAUTHORIZED || "true") === "true" },
+    tlsOptions: {
+      rejectUnauthorized: (process.env.IMAP_REJECT_UNAUTHORIZED || "true") === "true",
+      // SNI: node-imap does not derive servername from host. Google Front End
+      // serves a self-signed (invalid2.invalid) cert without SNI → DEPTH_ZERO_SELF_SIGNED_CERT.
+      servername: account.host,
+    },
   });
 }
 
@@ -347,7 +352,11 @@ mcpServer.tool(
     criteria: z
       .string()
       .default("ALL")
-      .describe("Search criteria: ALL, UNSEEN, SEEN, RECENT, etc."),
+      .describe(
+        'Search criteria. Single keyword (ALL, UNSEEN, SEEN, RECENT, FLAGGED, ...) ' +
+          'or a JSON array of node-imap terms for from/subject/since/before search, ' +
+          'e.g. \'["SINCE","1-May-2026"]\' or \'[["FROM","anthropic"],["SINCE","1-May-2026"]]\' (terms are ANDed).'
+      ),
   },
   async ({ account, folder, limit, criteria }) => {
     let imap;
@@ -356,8 +365,22 @@ mcpServer.tool(
       await connectImap(imap);
       await openMailbox(imap, folder, true);
 
-      // Parse criteria
-      const searchCriteria = criteria === "ALL" ? ["ALL"] : [criteria];
+      // Parse criteria.
+      // - "ALL" / single keywords (UNSEEN, SEEN, RECENT, FLAGGED, ...) → wrapped as-is.
+      // - A JSON array string lets callers pass node-imap term arrays, e.g.
+      //   '["SINCE","1-May-2026"]' or '[["FROM","anthropic"],["SINCE","1-May-2026"]]'
+      //   (multiple terms are ANDed). This enables from/subject/since/before search.
+      let searchCriteria;
+      if (criteria === "ALL") {
+        searchCriteria = ["ALL"];
+      } else {
+        try {
+          const parsed = JSON.parse(criteria);
+          searchCriteria = Array.isArray(parsed) ? parsed : [criteria];
+        } catch {
+          searchCriteria = [criteria];
+        }
+      }
       const uids = await searchEmails(imap, searchCriteria);
 
       // Get last N emails
@@ -832,6 +855,89 @@ mcpServer.tool(
           type: "text",
           text: JSON.stringify({ success: false, error: error.message }),
         }],
+      };
+    }
+  }
+);
+
+mcpServer.tool(
+  "imap_download_attachment",
+  "Download a single attachment from an email by UID, returned as base64. " +
+    "Omit 'filename' to just list the available attachments (no payload).",
+  {
+    account: z.string().describe("Account key: onecom, post, gmx, gmail, iserv, or ms365"),
+    folder: z.string().default("INBOX").describe("Folder containing the email"),
+    uid: z.number().describe("Email UID"),
+    filename: z
+      .string()
+      .optional()
+      .describe("Attachment filename to download. If omitted, returns the list of attachments only."),
+  },
+  async ({ account, folder, uid, filename }) => {
+    let imap;
+    try {
+      imap = createImapConnection(account);
+      await connectImap(imap);
+      await openMailbox(imap, folder, true);
+
+      const rawEmail = await new Promise((resolve, reject) => {
+        const fetch = imap.fetch([uid], { bodies: "", struct: true });
+        let emailBuffer = "";
+        fetch.on("message", (msg) => {
+          msg.on("body", (stream) => {
+            stream.on("data", (chunk) => (emailBuffer += chunk.toString("utf8")));
+          });
+        });
+        fetch.once("error", (err) => reject(err));
+        fetch.once("end", () => resolve(emailBuffer));
+      });
+
+      if (!rawEmail) {
+        imap.end();
+        return {
+          content: [{ type: "text", text: JSON.stringify({ success: false, error: `Email with UID ${uid} not found in ${folder}` }) }],
+        };
+      }
+
+      const parsed = await simpleParser(rawEmail);
+      imap.end();
+
+      const attachments = parsed.attachments || [];
+      const available = attachments.map((a) => ({ filename: a.filename, contentType: a.contentType, size: a.size }));
+
+      // Listing mode
+      if (!filename) {
+        return {
+          content: [{ type: "text", text: JSON.stringify({ success: true, account, folder, uid, attachments: available }, null, 2) }],
+        };
+      }
+
+      const match = attachments.find((a) => a.filename === filename);
+      if (!match) {
+        return {
+          content: [{ type: "text", text: JSON.stringify({ success: false, error: `Attachment '${filename}' not found`, available }) }],
+        };
+      }
+
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            success: true,
+            account,
+            folder,
+            uid,
+            filename: match.filename,
+            contentType: match.contentType,
+            size: match.size,
+            contentBase64: match.content.toString("base64"),
+          }),
+        }],
+      };
+    } catch (error) {
+      if (imap) imap.end();
+      return {
+        content: [{ type: "text", text: JSON.stringify({ success: false, error: error.message }) }],
       };
     }
   }
