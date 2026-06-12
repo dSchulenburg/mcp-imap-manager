@@ -33,8 +33,8 @@ This is a Model Context Protocol (MCP) server that provides IMAP email managemen
 8. **imap_mark_unseen**: Mark emails as unread
 
 **SMTP Tools:**
-9. **smtp_send_email**: Send an email via SMTP (supports to, cc, bcc, subject, text/html body, replyTo, attachments)
-10. **smtp_reply**: Reply to an existing email keeping the IMAP thread intact. Reads the original via IMAP using `replyToUid`, sets `In-Reply-To` + `References` headers, prefixes the subject with `AW:` (unless already prefixed), optionally quotes the original, and supports replyAll + attachments.
+9. **smtp_send_email**: Send an email via SMTP (supports to, cc, bcc, subject, text/html body, replyTo, attachments). Saves a copy to the account's Sent folder via IMAP APPEND when one is configured (see *Sent-Folder Copy*).
+10. **smtp_reply**: Reply to an existing email keeping the IMAP thread intact. Reads the original via IMAP using `replyToUid`, sets `In-Reply-To` + `References` headers, prefixes the subject with `AW:` (unless already prefixed), optionally quotes the original, and supports replyAll + attachments. Also saves a Sent-folder copy like `smtp_send_email`.
 
 ### Attachments
 
@@ -44,6 +44,25 @@ Both `smtp_send_email` and `smtp_reply` accept an optional `attachments` array. 
 - optional `contentType` (auto-detected from filename if omitted)
 
 `ATTACHMENT_WHITELIST_DIRS` is a comma-separated list of absolute directories. Empty/unset means the `path` form is rejected — only base64 `content` works in that case. This guards against arbitrary file reads via the MCP.
+
+### Sent-Folder Copy
+
+SMTP only *sends* — it does not place a copy in any "Sent" folder. To keep sent mail verifiable via IMAP/MCP, both `smtp_send_email` and `smtp_reply` optionally APPEND a copy to the account's Sent folder.
+
+**How it works:** the message is compiled once (nodemailer `streamTransport`) to obtain a stable `Message-ID` and the raw bytes. It is then **sent through nodemailer's normal `sendMail` path** with that pinned Message-ID — so the transmitted DATA has `Bcc:` stripped and Bcc is used only for the SMTP envelope (`RCPT TO`). The compiled buffer (which *keeps* the `Bcc:` header, like a normal client's Sent copy) is APPENDed to the Sent folder, flagged `\Seen`. Delivered mail and Sent copy thus share the same `Message-ID`. A failed APPEND never fails the send — the response carries `savedToSent:false` + `sentError`, but `success:true`.
+
+⚠️ Never send the compiled buffer verbatim (`raw`): it retains the `Bcc:` header and would leak blind recipients to everyone. The dedicated send path above avoids this.
+
+**Configuration (per account, in `config.mjs` / env):**
+- `sentFolder` — set via `IMAP_<ACCOUNT>_SENT_FOLDER`. If set, copies are saved there by default.
+- Default: only **`post`** ships with `INBOX.Sent` (the business mailbox; one.com SMTP does not auto-save). All others are unset = no copy unless you configure one.
+- **Gmail:** leave unset — Gmail's SMTP already auto-saves to "Sent Mail"; an APPEND would duplicate.
+
+**Per-call overrides (both SMTP tools):**
+- `saveToSent` (bool) — force on/off regardless of config (`false` suppresses even for `post`).
+- `sentFolder` (string) — override the target folder path for this call.
+
+Response adds: `savedToSent`, `sentFolder`, and `sentError` (only when the APPEND failed).
 
 ### HTTP Endpoints
 

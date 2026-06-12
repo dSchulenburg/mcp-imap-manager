@@ -11,6 +11,7 @@ import {
   buildQuoteText,
   pickReplyRecipients,
   parseWhitelistDirs,
+  resolveSentTarget,
 } from "../src/email-helpers.mjs";
 
 const sandbox = mkdtempSync(join(tmpdir(), "imap-mcp-test-"));
@@ -182,4 +183,29 @@ test("parseWhitelistDirs splits and trims", () => {
   // Both dirs exist, should be realpath-resolved (fs.realpath returns canonical case)
   assert.equal(dirs[0].toLowerCase(), allowedDir.toLowerCase());
   assert.equal(dirs[1].toLowerCase(), otherDir.toLowerCase());
+});
+
+test("resolveSentTarget saves to configured folder by default", () => {
+  const r = resolveSentTarget({ sentFolder: "INBOX.Sent" });
+  assert.deepEqual(r, { save: true, folder: "INBOX.Sent" });
+});
+
+test("resolveSentTarget does not save when no folder configured", () => {
+  assert.deepEqual(resolveSentTarget({}), { save: false, folder: null });
+  assert.deepEqual(resolveSentTarget(undefined), { save: false, folder: null });
+});
+
+test("resolveSentTarget: explicit saveToSent=false overrides configured folder", () => {
+  const r = resolveSentTarget({ sentFolder: "INBOX.Sent" }, { saveToSent: false });
+  assert.deepEqual(r, { save: false, folder: null });
+});
+
+test("resolveSentTarget: explicit saveToSent=true falls back to INBOX.Sent", () => {
+  const r = resolveSentTarget({}, { saveToSent: true });
+  assert.deepEqual(r, { save: true, folder: "INBOX.Sent" });
+});
+
+test("resolveSentTarget: sentFolder arg overrides account default", () => {
+  const r = resolveSentTarget({ sentFolder: "INBOX.Sent" }, { sentFolder: "INBOX.Gesendet" });
+  assert.deepEqual(r, { save: true, folder: "INBOX.Gesendet" });
 });

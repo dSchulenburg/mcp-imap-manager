@@ -77,6 +77,26 @@ export function buildAttachments(attachments, whitelist = parseWhitelistDirs()) 
   return out;
 }
 
+/**
+ * Decide whether (and where) to save an SMTP-sent copy via IMAP APPEND.
+ *
+ * Resolution order:
+ *  - explicit `saveToSent` arg (true/false) overrides everything;
+ *  - otherwise saving is enabled iff the account has a configured `sentFolder`;
+ *  - the target folder is `sentFolder` arg → account default → "INBOX.Sent".
+ *
+ * @param {{sentFolder?: string}} accountConfig
+ * @param {{saveToSent?: boolean, sentFolder?: string}} [opts]
+ * @returns {{save: boolean, folder: string|null}}
+ */
+export function resolveSentTarget(accountConfig, opts = {}) {
+  const { saveToSent, sentFolder } = opts;
+  const configured = accountConfig && accountConfig.sentFolder;
+  const save = saveToSent !== undefined ? !!saveToSent : !!configured;
+  if (!save) return { save: false, folder: null };
+  return { save: true, folder: sentFolder || configured || "INBOX.Sent" };
+}
+
 export function ensureReplyPrefix(subject) {
   const s = (subject || "").trim();
   if (/^(re|aw|antw|antwort)\s*:/i.test(s)) return s;

@@ -16,6 +16,7 @@ import {
   buildQuoteText,
   buildQuoteHtml,
   pickReplyRecipients,
+  resolveSentTarget,
 } from "./email-helpers.mjs";
 
 const app = express();
@@ -1088,6 +1089,81 @@ function createSmtpTransporter(accountKey) {
   });
 }
 
+// Stateless builder: compiles a mailOptions object into a raw RFC822 Buffer
+// (CRLF line endings) WITHOUT sending. We use it only to (a) obtain a stable
+// Message-ID shared between the wire message and the Sent copy, and (b) get the
+// bytes to APPEND to the Sent folder. NOTE: this buffer KEEPS the Bcc header —
+// fine (even desirable) for the personal Sent copy, but it must NEVER be put on
+// the wire as-is. The actual send goes through nodemailer's normal sendMail path,
+// which strips Bcc from transmitted DATA and uses it only for the SMTP envelope.
+const rawMessageBuilder = nodemailer.createTransport({
+  streamTransport: true,
+  buffer: true,
+  newline: "windows",
+});
+
+function buildRawMessage(mailOptions) {
+  return rawMessageBuilder.sendMail(mailOptions); // { message: Buffer, messageId, envelope }
+}
+
+/**
+ * APPEND a raw message to a folder, flagged \Seen. Opens its own connection.
+ */
+async function appendToSentFolder(account, rawMessage, folder) {
+  const imap = createImapConnection(account);
+  try {
+    await connectImap(imap);
+    await new Promise((resolve, reject) => {
+      imap.append(rawMessage, { mailbox: folder, flags: ["\\Seen"] }, (err) =>
+        err ? reject(err) : resolve()
+      );
+    });
+  } finally {
+    try { imap.end(); } catch {}
+  }
+}
+
+/**
+ * Build → send via SMTP → (best-effort) save a copy to the account's Sent folder.
+ * A failed Sent-copy APPEND never fails the send: the mail is already delivered,
+ * so we report savedToSent:false + sentError instead of throwing.
+ *
+ * @returns {{info: object, messageId: string, savedToSent: boolean, sentFolder: string|null, sentError?: string}}
+ */
+async function sendMailWithSentCopy(account, mailOptions, { saveToSent, sentFolder } = {}) {
+  const transporter = createSmtpTransporter(account);
+  const target = resolveSentTarget(config.accounts[account], { saveToSent, sentFolder });
+
+  // Only compile up-front when we need a Sent copy — this keeps the no-save path
+  // byte-for-byte identical to the original behaviour. When saving, we pin the
+  // wire message's Message-ID to the compiled one so both copies match.
+  const built = target.save ? await buildRawMessage(mailOptions) : null;
+  const sendOptions = built ? { ...mailOptions, messageId: built.messageId } : mailOptions;
+
+  const sendWithTimeout = Promise.race([
+    transporter.sendMail(sendOptions),
+    new Promise((_, reject) =>
+      setTimeout(() => reject(new Error("SMTP timeout after 15s - check port/firewall")), 15000)
+    ),
+  ]);
+  const info = await sendWithTimeout;
+  const messageId = built ? built.messageId : info.messageId;
+
+  let saved = { savedToSent: false, sentFolder: null };
+  if (target.save) {
+    try {
+      await appendToSentFolder(account, built.message, target.folder);
+      saved = { savedToSent: true, sentFolder: target.folder };
+      console.log(`[SMTP] Sent copy saved to ${account}/${target.folder}`);
+    } catch (err) {
+      console.error(`[SMTP] Sent-copy APPEND to ${target.folder} failed: ${err.message}`);
+      saved = { savedToSent: false, sentFolder: target.folder, sentError: err.message };
+    }
+  }
+
+  return { info, messageId, ...saved };
+}
+
 const attachmentSchema = z
   .array(
     z.object({
@@ -1137,13 +1213,14 @@ mcpServer.tool(
     bcc: z.string().optional().describe("BCC recipients (comma-separated)"),
     replyTo: z.string().optional().describe("Reply-to address"),
     noSignature: z.boolean().optional().describe("Suppress auto-appended signature (default: false)"),
+    saveToSent: z.boolean().optional().describe("Save a copy to the account's Sent folder via IMAP (default: on iff the account has a configured sentFolder, e.g. 'post')"),
+    sentFolder: z.string().optional().describe("Override the Sent folder path for the saved copy (default: account's configured folder)"),
     attachments: attachmentSchema,
   },
-  async ({ account, to, subject, text, html, cc, bcc, replyTo, noSignature, attachments }) => {
+  async ({ account, to, subject, text, html, cc, bcc, replyTo, noSignature, saveToSent, sentFolder, attachments }) => {
     console.log(`[SMTP] Sending email to ${to} via ${account} (subject: ${subject})`);
     try {
       const builtAttachments = buildAttachments(attachments);
-      const transporter = createSmtpTransporter(account);
       const accountConfig = config.accounts[account];
       const signature = !noSignature ? accountConfig.signature : null;
 
@@ -1159,16 +1236,9 @@ mcpServer.tool(
         attachments: builtAttachments,
       };
 
-      // Timeout to prevent hanging on blocked ports
-      const sendWithTimeout = Promise.race([
-        transporter.sendMail(mailOptions),
-        new Promise((_, reject) =>
-          setTimeout(() => reject(new Error("SMTP timeout after 15s - check port/firewall")), 15000)
-        ),
-      ]);
-
-      const info = await sendWithTimeout;
-      console.log(`[SMTP] Email sent successfully to ${to} (messageId: ${info.messageId}, attachments: ${builtAttachments?.length || 0})`);
+      const sent = await sendMailWithSentCopy(account, mailOptions, { saveToSent, sentFolder });
+      const info = sent.info;
+      console.log(`[SMTP] Email sent successfully to ${to} (messageId: ${sent.messageId}, attachments: ${builtAttachments?.length || 0}, savedToSent: ${sent.savedToSent})`);
 
       return {
         content: [
@@ -1178,12 +1248,15 @@ mcpServer.tool(
               {
                 success: true,
                 account,
-                messageId: info.messageId,
+                messageId: sent.messageId,
                 to,
                 subject,
                 accepted: info.accepted,
                 rejected: info.rejected,
                 attachmentsCount: builtAttachments?.length || 0,
+                savedToSent: sent.savedToSent,
+                sentFolder: sent.sentFolder,
+                ...(sent.sentError ? { sentError: sent.sentError } : {}),
               },
               null,
               2
@@ -1252,9 +1325,11 @@ mcpServer.tool(
     quoteOriginal: z.boolean().default(true).describe("Append the quoted original below the reply body (default: true)"),
     subject: z.string().optional().describe("Override subject (default: 'AW: <original subject>')"),
     noSignature: z.boolean().optional().describe("Suppress auto-appended signature"),
+    saveToSent: z.boolean().optional().describe("Save a copy to the account's Sent folder via IMAP (default: on iff the account has a configured sentFolder)"),
+    sentFolder: z.string().optional().describe("Override the Sent folder path for the saved copy"),
     attachments: attachmentSchema,
   },
-  async ({ account, sourceAccount, sourceFolder, replyToUid, text, html, to, cc, bcc, replyAll, quoteOriginal, subject, noSignature, attachments }) => {
+  async ({ account, sourceAccount, sourceFolder, replyToUid, text, html, to, cc, bcc, replyAll, quoteOriginal, subject, noSignature, saveToSent, sentFolder, attachments }) => {
     const imapAccount = sourceAccount || account;
     console.log(`[SMTP] Reply via ${account} to UID ${replyToUid} in ${imapAccount}/${sourceFolder}`);
     try {
@@ -1290,7 +1365,6 @@ mcpServer.tool(
         }
       }
 
-      const transporter = createSmtpTransporter(account);
       const signature = !noSignature ? accountConfig.signature : null;
 
       const mailOptions = {
@@ -1306,15 +1380,9 @@ mcpServer.tool(
         attachments: builtAttachments,
       };
 
-      const sendWithTimeout = Promise.race([
-        transporter.sendMail(mailOptions),
-        new Promise((_, reject) =>
-          setTimeout(() => reject(new Error("SMTP timeout after 15s - check port/firewall")), 15000)
-        ),
-      ]);
-
-      const info = await sendWithTimeout;
-      console.log(`[SMTP] Reply sent to ${recipientTo} (messageId: ${info.messageId}, inReplyTo: ${inReplyTo})`);
+      const sent = await sendMailWithSentCopy(account, mailOptions, { saveToSent, sentFolder });
+      const info = sent.info;
+      console.log(`[SMTP] Reply sent to ${recipientTo} (messageId: ${sent.messageId}, inReplyTo: ${inReplyTo}, savedToSent: ${sent.savedToSent})`);
 
       return {
         content: [
@@ -1324,7 +1392,7 @@ mcpServer.tool(
               {
                 success: true,
                 account,
-                messageId: info.messageId,
+                messageId: sent.messageId,
                 to: recipientTo,
                 cc: recipientCc || null,
                 subject: finalSubject,
@@ -1333,6 +1401,9 @@ mcpServer.tool(
                 accepted: info.accepted,
                 rejected: info.rejected,
                 attachmentsCount: builtAttachments?.length || 0,
+                savedToSent: sent.savedToSent,
+                sentFolder: sent.sentFolder,
+                ...(sent.sentError ? { sentError: sent.sentError } : {}),
               },
               null,
               2

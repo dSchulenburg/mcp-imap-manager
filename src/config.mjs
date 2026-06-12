@@ -21,6 +21,8 @@ export const config = {
       password: process.env.IMAP_ONECOM_PASSWORD,
       tls: process.env.IMAP_ONECOM_TLS !== "false",
       signature: process.env.SIGNATURE_ONECOM,
+      // Sent folder for SMTP-sent copies (IMAP APPEND). Unset = no copy saved.
+      sentFolder: process.env.IMAP_ONECOM_SENT_FOLDER,
       // SMTP Settings
       smtp: {
         host: process.env.SMTP_ONECOM_HOST || "send.one.com",
@@ -35,6 +37,7 @@ export const config = {
       user: process.env.IMAP_GMX_USER,
       password: process.env.IMAP_GMX_PASSWORD,
       tls: process.env.IMAP_GMX_TLS !== "false",
+      sentFolder: process.env.IMAP_GMX_SENT_FOLDER,
       // SMTP Settings
       smtp: {
         host: process.env.SMTP_GMX_HOST || "mail.gmx.net",
@@ -49,6 +52,8 @@ export const config = {
       user: process.env.IMAP_GMAIL_USER,
       password: process.env.IMAP_GMAIL_PASSWORD,
       tls: process.env.IMAP_GMAIL_TLS !== "false",
+      // Leave unset: Gmail SMTP auto-saves to "Sent Mail" — an APPEND would duplicate.
+      sentFolder: process.env.IMAP_GMAIL_SENT_FOLDER,
       // SMTP Settings
       smtp: {
         host: process.env.SMTP_GMAIL_HOST || "smtp.gmail.com",
@@ -63,6 +68,7 @@ export const config = {
       user: process.env.IMAP_ISERV_USER,
       password: process.env.IMAP_ISERV_PASSWORD,
       tls: process.env.IMAP_ISERV_TLS !== "false",
+      sentFolder: process.env.IMAP_ISERV_SENT_FOLDER,
       // SMTP Settings
       smtp: {
         host: process.env.SMTP_ISERV_HOST || "smtp.mail.schuldock.de",
@@ -77,6 +83,7 @@ export const config = {
       user: process.env.IMAP_MS365_USER,
       password: process.env.IMAP_MS365_PASSWORD,
       tls: process.env.IMAP_MS365_TLS !== "false",
+      sentFolder: process.env.IMAP_MS365_SENT_FOLDER,
       // SMTP Settings
       smtp: {
         host: process.env.SMTP_MS365_HOST || "smtp.office365.com",
@@ -92,6 +99,10 @@ export const config = {
       password: process.env.IMAP_POST_PASSWORD,
       tls: process.env.IMAP_POST_TLS !== "false",
       signature: process.env.SIGNATURE_POST,
+      // Business mailbox: save SMTP-sent copies to the server Sent folder so they
+      // stay verifiable via IMAP/MCP (one.com SMTP does NOT auto-save). Folder
+      // INBOX.Sent created 12.06.2026; override via IMAP_POST_SENT_FOLDER.
+      sentFolder: process.env.IMAP_POST_SENT_FOLDER || "INBOX.Sent",
       // SMTP Settings
       smtp: {
         host: process.env.SMTP_POST_HOST || "send.one.com",
