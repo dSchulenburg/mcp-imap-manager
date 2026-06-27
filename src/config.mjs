@@ -68,7 +68,10 @@ export const config = {
       user: process.env.IMAP_ISERV_USER,
       password: process.env.IMAP_ISERV_PASSWORD,
       tls: process.env.IMAP_ISERV_TLS !== "false",
-      sentFolder: process.env.IMAP_ISERV_SENT_FOLDER,
+      // IServ SMTP saves no Sent copy; APPEND to the server Sent folder so sent mail
+      // stays verifiable via IMAP/MCP. IServ uses slash-notation (INBOX/Sent), NOT
+      // one.com's dot-notation (INBOX.Sent). Override via IMAP_ISERV_SENT_FOLDER.
+      sentFolder: process.env.IMAP_ISERV_SENT_FOLDER || "INBOX/Sent",
       // SMTP Settings
       smtp: {
         host: process.env.SMTP_ISERV_HOST || "smtp.mail.schuldock.de",
