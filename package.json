@@ -27,5 +27,10 @@
     "mailparser": "^3.9.15",
     "nodemailer": "^9.0.1",
     "zod": "^4.1.13"
+  },
+  "overrides": {
+    "utf7": {
+      "semver": "^5.7.2"
+    }
   }
 }
