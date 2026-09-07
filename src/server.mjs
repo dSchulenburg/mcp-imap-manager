@@ -9,6 +9,7 @@ import { z } from "zod";
 import { config, getConfiguredAccounts } from "./config.mjs";
 import { generalLimiter, mcpLimiter, healthLimiter } from "./rate-limit.mjs";
 import { requireApiKey } from "./auth.mjs";
+import { healthHandler } from "./health.mjs";
 import {
   buildAttachments,
   ensureReplyPrefix,
@@ -1431,15 +1432,9 @@ mcpServer.tool(
 // HTTP Endpoints
 // ============================================================================
 
-// Health check
-app.get("/health", (req, res) => {
-  res.json({
-    status: "ok",
-    service: "imap-mcp",
-    version: "1.0.0",
-    timestamp: new Date().toISOString(),
-  });
-});
+// Health check — macht seit 07.09.2026 einen echten MCP-Roundtrip (Feld `mcp`
+// im Body), antwortet aber immer mit 200. Siehe src/health.mjs.
+app.get("/health", healthHandler);
 
 // Version info
 app.get("/version", (req, res) => {
