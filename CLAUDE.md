@@ -18,7 +18,24 @@ This is a Model Context Protocol (MCP) server that provides IMAP email managemen
 
 - **src/config.mjs**: Environment variable loader for IMAP account credentials and server settings
 
-- **src/email-helpers.mjs**: Pure helpers for attachment whitelist enforcement, reply-thread headers (In-Reply-To / References), reply-prefix normalization, quote rendering, and reply-recipient picking. Unit-tested via `npm test`.
+- **src/email-helpers.mjs**: Pure helpers for attachment whitelist enforcement, reply-thread headers (In-Reply-To / References), reply-prefix normalization, quote rendering, reply-recipient picking, and `toJsonText()` for tool responses. Unit-tested via `npm test`.
+
+### Why tool responses go through `toJsonText()`
+
+Any tool response that can carry text from a foreign mail (`imap_list_emails`,
+`imap_read_email`, `smtp_reply`) must serialize with `toJsonText()`, not plain
+`JSON.stringify(x, null, 2)`.
+
+`JSON.stringify` leaves **U+2028 LINE SEPARATOR** and **U+2029 PARAGRAPH SEPARATOR**
+raw — they are valid JSON. But they are real line terminators in JavaScript and in
+line-based parsers, so the transport's SSE frame is split mid-payload. The failure is
+silent and looks like anything but an encoding problem: the server answers 200 with a
+correct body, nothing appears in the container log, and the client reports
+`Invalid response format`.
+
+Measured 07.09.2026 on IServ UID 273 (a mail written in the IServ/OX webmail editor,
+three U+2028 in its HTML part). Neighbouring mails in the same mailbox read fine — the
+bug is per-message, which makes it easy to misread as a connection problem.
 
 ### MCP Tools Registered
 

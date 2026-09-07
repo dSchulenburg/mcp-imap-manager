@@ -155,3 +155,32 @@ export function pickReplyRecipients(parsed, { replyAll, selfAddress }) {
     cc: ccRest.length > 0 ? ccRest.join(", ") : null,
   };
 }
+
+/**
+ * JSON-Text fuer MCP-Antworten. Wie JSON.stringify(value, null, 2), aber mit
+ * maskiertem U+2028/U+2029.
+ *
+ * JSON.stringify laesst LINE SEPARATOR und PARAGRAPH SEPARATOR roh stehen - sie
+ * sind gueltiges JSON. In JavaScript und in zeilenbasierten Parsern sind es aber
+ * echte Zeilenenden, und der SSE-Rahmen des MCP-Transports reisst genau dort
+ * mittendrin ab: der Server liefert 200 mit sauberem Body, der Client meldet
+ * "Invalid response format" und im Server-Log steht keine einzige Fehlerzeile.
+ *
+ * Ausgeloest von Webmail-Editoren (hier: IServ/OX). Gemessen an IServ-UID 273
+ * am 07.09.2026 - drei U+2028 im HTML-Teil, drei Leseversuche gescheitert.
+ *
+ * Die Zeichenklasse wird aus Zahlencodes gebaut statt als Regex-Literal notiert:
+ * ein rohes U+2028 in dieser Datei waere selbst ein Zeilenende und zerlegte die
+ * Quelle (SyntaxError im Literal) - genau der Mechanismus, um den es hier geht.
+ */
+const UNICODE_SEPARATORS = new RegExp(
+  "[" + String.fromCharCode(0x2028, 0x2029) + "]",
+  "g"
+);
+
+export function toJsonText(value) {
+  return JSON.stringify(value, null, 2).replace(
+    UNICODE_SEPARATORS,
+    (ch) => "\\u" + ch.charCodeAt(0).toString(16)
+  );
+}

@@ -18,6 +18,7 @@ import {
   buildQuoteHtml,
   pickReplyRecipients,
   resolveSentTarget,
+  toJsonText,
 } from "./email-helpers.mjs";
 
 const app = express();
@@ -395,25 +396,21 @@ mcpServer.tool(
         content: [
           {
             type: "text",
-            text: JSON.stringify(
-              {
-                success: true,
-                account,
-                folder,
-                total: uids.length,
-                returned: emails.length,
-                emails: emails.map((e) => ({
-                  uid: e.uid,
-                  from: e.headers.from,
-                  subject: e.headers.subject,
-                  date: e.headers.date,
-                  messageId: e.headers["message-id"],
-                  flags: e.flags,
-                })),
-              },
-              null,
-              2
-            ),
+            text: toJsonText({
+              success: true,
+              account,
+              folder,
+              total: uids.length,
+              returned: emails.length,
+              emails: emails.map((e) => ({
+                uid: e.uid,
+                from: e.headers.from,
+                subject: e.headers.subject,
+                date: e.headers.date,
+                messageId: e.headers["message-id"],
+                flags: e.flags,
+              })),
+            }),
           },
         ],
       };
@@ -847,7 +844,7 @@ mcpServer.tool(
       return {
         content: [{
           type: "text",
-          text: JSON.stringify(result, null, 2),
+          text: toJsonText(result),
         }],
       };
     } catch (error) {
@@ -1389,7 +1386,7 @@ mcpServer.tool(
         content: [
           {
             type: "text",
-            text: JSON.stringify(
+            text: toJsonText(
               {
                 success: true,
                 account,
@@ -1406,8 +1403,6 @@ mcpServer.tool(
                 sentFolder: sent.sentFolder,
                 ...(sent.sentError ? { sentError: sent.sentError } : {}),
               },
-              null,
-              2
             ),
           },
         ],

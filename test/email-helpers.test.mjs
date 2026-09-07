@@ -12,6 +12,7 @@ import {
   pickReplyRecipients,
   parseWhitelistDirs,
   resolveSentTarget,
+  toJsonText,
 } from "../src/email-helpers.mjs";
 
 const sandbox = mkdtempSync(join(tmpdir(), "imap-mcp-test-"));
@@ -208,4 +209,36 @@ test("resolveSentTarget: explicit saveToSent=true falls back to INBOX.Sent", () 
 test("resolveSentTarget: sentFolder arg overrides account default", () => {
   const r = resolveSentTarget({ sentFolder: "INBOX.Sent" }, { sentFolder: "INBOX.Gesendet" });
   assert.deepEqual(r, { save: true, folder: "INBOX.Gesendet" });
+});
+
+// ---------------------------------------------------------------------------
+// toJsonText: U+2028/U+2029 duerfen nicht roh in die Antwort geraten.
+// Hintergrund: JSON.stringify escapt LINE SEPARATOR / PARAGRAPH SEPARATOR nicht.
+// Sie sind gueltiges JSON, aber in JavaScript und in zeilenbasierten Parsern
+// echte Zeilenenden - der SSE-Rahmen des MCP-Transports reisst daran mittendrin
+// ab ("Invalid response format"). Gemessen an IServ-UID 273, 07.09.2026.
+// ---------------------------------------------------------------------------
+const LS = String.fromCharCode(0x2028); // LINE SEPARATOR
+const PS = String.fromCharCode(0x2029); // PARAGRAPH SEPARATOR
+const BACKSLASH = String.fromCharCode(92);
+
+test("toJsonText escapt LINE SEPARATOR statt ihn roh durchzureichen", () => {
+  const out = toJsonText({ html: `<p>eins${LS}zwei</p>` });
+  assert.ok(!out.includes(LS), "rohes U+2028 in der Ausgabe");
+  assert.ok(out.includes(BACKSLASH + "u2028"), "escapte Form fehlt");
+});
+
+test("toJsonText escapt PARAGRAPH SEPARATOR", () => {
+  const out = toJsonText({ text: `a${PS}b` });
+  assert.ok(!out.includes(PS), "rohes U+2029 in der Ausgabe");
+  assert.ok(out.includes(BACKSLASH + "u2029"), "escapte Form fehlt");
+});
+
+test("toJsonText bleibt verlustfrei: JSON.parse liefert das Original zurueck", () => {
+  const original = { subject: "Geräte für KuK", html: `<p>x${LS}y${PS}z</p>`, n: 23 };
+  assert.deepEqual(JSON.parse(toJsonText(original)), original);
+});
+
+test("toJsonText liefert weiter eingerueckte Ausgabe wie bisher", () => {
+  assert.equal(toJsonText({ a: 1 }), '{\n  "a": 1\n}');
 });
