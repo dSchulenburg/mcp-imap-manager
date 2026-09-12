@@ -1,9 +1,18 @@
 import rateLimit from 'express-rate-limit';
 
-// Standard Rate Limiter für alle Requests
+// Pfade mit eigenem Limiter (mcpLimiter, healthLimiter) nimmt der allgemeine Limiter aus.
+// Sonst zaehlt er sie mit: 100 Requests / 15 min waren fuer einen Collector-Lauf
+// (3 Listen + 75 Reads + 75 Moves) zu wenig, und die letzten ~50 Moves bekamen 429,
+// obwohl /mcp mit ~17/min weit unter seinen 30/min lag (gemessen 12.09.2026).
+export function hasOwnLimiter(path) {
+  return path === "/mcp" || path.startsWith("/mcp/") || path === "/health" || path.startsWith("/health/");
+}
+
+// Standard Rate Limiter für alle uebrigen Requests
 export const generalLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 Minuten
   max: 100, // max 100 Requests pro IP pro 15 Min
+  skip: (req) => hasOwnLimiter(req.path),
   standardHeaders: true,
   legacyHeaders: false,
   message: {
