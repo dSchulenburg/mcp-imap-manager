@@ -1,4 +1,7 @@
-FROM node:20-alpine
+# Node 22 statt 20 (20.09.2026): Node 20 "Iron" ist seit 30.04.2026 aus der Wartung
+# und bekommt keine Sicherheitspatches der Laufzeit mehr. Die Alpine-Basis wird
+# weiter gepflegt, die Node-Binaerdatei nicht.
+FROM node:22-alpine
 
 WORKDIR /app
 
