@@ -18,14 +18,14 @@
   "author": "Dirk Schulenburg",
   "license": "ISC",
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.10.2",
+    "@modelcontextprotocol/sdk": "^1.32.1",
     "cors": "^2.8.5",
     "dotenv": "^17.2.3",
     "express": "^5.0.1",
     "express-rate-limit": "^7.5.0",
     "imap": "^0.8.19",
     "mailparser": "^3.9.15",
-    "nodemailer": "^9.0.1",
+    "nodemailer": "^10.1.2",
     "zod": "^4.1.13"
   },
   "overrides": {
