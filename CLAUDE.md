@@ -81,6 +81,25 @@ SMTP only *sends* — it does not place a copy in any "Sent" folder. To keep sen
 
 Response adds: `savedToSent`, `sentFolder`, and `sentError` (only when the APPEND failed).
 
+### Account allowlist per key (`MCP_KEY_ACCOUNTS`)
+
+Every `/mcp` request builds its own `McpServer`; `registerTools()` registers through
+`guardedTool()` (`src/account-guard.mjs`), which rejects any call whose string argument
+named `*account` (`account`, `sourceAccount` of `smtp_reply`) is not allowed for the
+calling key — with the same "not configured" error as a missing account. `imap_list_accounts`,
+`GET /accounts` and `GET /test/:account` are filtered too.
+
+**Fail-closed** (decision 20.10.2026): a user from `MCP_API_KEYS` without an entry in
+`MCP_KEY_ACCOUNTS` sees nothing. Only `MCP_API_KEY` (`admin`) and dev mode see everything.
+Add an entry BEFORE handing out a new key. New tools are covered automatically as long as
+the parameter name ends in `account`.
+
+### Dashboard endpoint `/mcp/lagebild`
+
+Read-only, own keys (`LAGEBILD_API_KEYS`), mounted before `/mcp`. One tool, `lagebild_post`:
+newest mails of `post` INBOX as ONE content block `{ rows: [{datum, absender, betreff, ungelesen}] }`.
+No account parameter, mailbox opened read-only (no `\Seen`). Pattern shared with teams-mcp.
+
 ### HTTP Endpoints
 
 - `GET /health`: Health check (returns OK/status)

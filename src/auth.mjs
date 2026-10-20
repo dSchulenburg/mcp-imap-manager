@@ -8,7 +8,41 @@
  *   MCP_API_KEYS=key1:alice,key2:bob,key3:carol  (Multi-User)
  *
  * Der Benutzername wird in req.apiUser gespeichert und geloggt.
+ *
+ * Konten-Freigabe je Zugang (Bereichstrennung, Task jku):
+ *   MCP_KEY_ACCOUNTS=business:post|onecom|gmail;privat:gmx|gmail;schule:iserv|ms365
+ * Schlüssel sind die Benutzernamen aus MCP_API_KEYS (keine Geheimnisse doppelt in der .env).
+ * req.apiAccounts ist danach ein Set der erlaubten Kontoschlüssel oder null (= alle).
  */
+
+// "user:a|b;user2:c" -> Map(user -> Set). Leere Liste ("user:") = Set ohne Einträge.
+export function parseKeyAccounts(spec) {
+  const map = new Map();
+  for (const entry of String(spec || "").split(";")) {
+    const [user, list] = entry.split(":").map((x) => (x || "").trim());
+    if (!user) continue;
+    map.set(user, new Set(String(list || "").split("|").map((a) => a.trim()).filter(Boolean)));
+  }
+  return map;
+}
+
+const keyAccounts = parseKeyAccounts(process.env.MCP_KEY_ACCOUNTS);
+
+/**
+ * Welche Konten darf ein Zugang sehen?
+ *
+ * @param {string} user         Benutzername aus MCP_API_KEYS ('admin' für MCP_API_KEY, 'dev-mode' ohne Keys)
+ * @param {Map<string, Set<string>>} table  Ergebnis von parseKeyAccounts()
+ * @returns {Set<string>|null}  erlaubte Kontoschlüssel, oder null = alle Konten
+ */
+export function allowedAccountsFor(user, table = keyAccounts) {
+  if (table.has(user)) return table.get(user);
+  // Mittelweg (Dirk 20.10.2026): fail-closed. Nur der Hauptschlüssel (MCP_API_KEY -> 'admin')
+  // und der Betrieb ohne Schlüssel sehen alles; jeder andere Zugang braucht einen Eintrag,
+  // ein vergessener sieht nichts statt alles.
+  if (user === "admin" || user === "dev-mode") return null;
+  return new Set();
+}
 
 // Parse API Keys aus Umgebungsvariablen
 function parseApiKeys() {
@@ -46,6 +80,7 @@ export function requireApiKey(req, res, next) {
   // Wenn keine Keys konfiguriert: offen (dev)
   if (apiKeys.size === 0) {
     req.apiUser = 'dev-mode';
+    req.apiAccounts = allowedAccountsFor('dev-mode');
     return next();
   }
 
@@ -64,6 +99,7 @@ export function requireApiKey(req, res, next) {
 
   // User für Logging speichern
   req.apiUser = user;
+  req.apiAccounts = allowedAccountsFor(user);
   console.log(`[Auth] Request from user: ${user}`);
   next();
 }
