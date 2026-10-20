@@ -9,6 +9,8 @@ import { z } from "zod";
 import { config, getConfiguredAccounts } from "./config.mjs";
 import { generalLimiter, mcpLimiter, healthLimiter } from "./rate-limit.mjs";
 import { requireApiKey } from "./auth.mjs";
+import { guardedTool, isAccountAllowed } from "./account-guard.mjs";
+import { makeLagebildRouter } from "./lagebild.mjs";
 import { healthHandler } from "./health.mjs";
 import {
   buildAttachments,
@@ -248,26 +250,32 @@ function fetchEmails(imap, uids, options = {}) {
 // wrapped in registerTools() which buildMcpServer() invokes on a new instance.
 // ============================================================================
 
-function buildMcpServer() {
+function buildMcpServer(allowed = null) {
   const mcpServer = new McpServer({
     name: "imap-mcp",
     version: "1.0.0",
   });
-  registerTools(mcpServer);
+  registerTools(mcpServer, allowed);
   return mcpServer;
 }
 
-function registerTools(mcpServer) {
+// Konfigurierte Konten, die dieser Zugang sehen darf.
+function visibleAccounts(allowed) {
+  return getConfiguredAccounts().filter((a) => isAccountAllowed(allowed, a.key));
+}
+
+function registerTools(mcpServer, allowed) {
+const tool = guardedTool(mcpServer, allowed);
 
 // ----------------------------------------------------------------------------
 // Tool: imap_list_accounts
 // ----------------------------------------------------------------------------
-mcpServer.tool(
+tool(
   "imap_list_accounts",
   "List all configured IMAP accounts",
   {},
   async () => {
-    const accounts = getConfiguredAccounts();
+    const accounts = visibleAccounts(allowed);
     return {
       content: [
         {
@@ -294,7 +302,7 @@ mcpServer.tool(
 // ----------------------------------------------------------------------------
 // Tool: imap_list_folders
 // ----------------------------------------------------------------------------
-mcpServer.tool(
+tool(
   "imap_list_folders",
   "List all folders/mailboxes for an IMAP account",
   {
@@ -345,7 +353,7 @@ mcpServer.tool(
 // ----------------------------------------------------------------------------
 // Tool: imap_list_emails
 // ----------------------------------------------------------------------------
-mcpServer.tool(
+tool(
   "imap_list_emails",
   "List emails in a folder",
   {
@@ -431,7 +439,7 @@ mcpServer.tool(
 // ----------------------------------------------------------------------------
 // Tool: imap_move_email
 // ----------------------------------------------------------------------------
-mcpServer.tool(
+tool(
   "imap_move_email",
   "Move an email to another folder",
   {
@@ -487,7 +495,7 @@ mcpServer.tool(
 // ----------------------------------------------------------------------------
 // Tool: imap_move_by_message_id
 // ----------------------------------------------------------------------------
-mcpServer.tool(
+tool(
   "imap_move_by_message_id",
   "Move an email by Message-ID to another folder",
   {
@@ -563,7 +571,7 @@ mcpServer.tool(
 // ----------------------------------------------------------------------------
 // Tool: imap_delete_email
 // ----------------------------------------------------------------------------
-mcpServer.tool(
+tool(
   "imap_delete_email",
   "Delete an email (marks as deleted and expunges)",
   {
@@ -617,7 +625,7 @@ mcpServer.tool(
 // ----------------------------------------------------------------------------
 // Tool: imap_bulk_move
 // ----------------------------------------------------------------------------
-mcpServer.tool(
+tool(
   "imap_bulk_move",
   "Move multiple emails to a folder",
   {
@@ -685,7 +693,7 @@ mcpServer.tool(
 // ----------------------------------------------------------------------------
 // Tool: imap_mark_unseen
 // ----------------------------------------------------------------------------
-mcpServer.tool(
+tool(
   "imap_mark_unseen",
   "Mark emails as unseen/unread by removing the \\Seen flag",
   {
@@ -767,7 +775,7 @@ mcpServer.tool(
 // ----------------------------------------------------------------------------
 // Tool: imap_read_email
 // ----------------------------------------------------------------------------
-mcpServer.tool(
+tool(
   "imap_read_email",
   "Read the full content of an email by UID (body, headers, attachments info)",
   {
@@ -859,7 +867,7 @@ mcpServer.tool(
   }
 );
 
-mcpServer.tool(
+tool(
   "imap_download_attachment",
   "Download a single attachment from an email by UID, returned as base64. " +
     "Omit 'filename' to just list the available attachments (no payload).",
@@ -974,7 +982,7 @@ function expandFolderPaths(paths, delimiter) {
 // ----------------------------------------------------------------------------
 // Tool: imap_create_folder
 // ----------------------------------------------------------------------------
-mcpServer.tool(
+tool(
   "imap_create_folder",
   "Create a single IMAP folder/mailbox. Use delimiter-separated paths (e.g. 'INBOX.Ablage.Finanzamt' for one.com). Returns success even if folder already exists.",
   {
@@ -1009,7 +1017,7 @@ mcpServer.tool(
 // ----------------------------------------------------------------------------
 // Tool: imap_create_folder_tree
 // ----------------------------------------------------------------------------
-mcpServer.tool(
+tool(
   "imap_create_folder_tree",
   "Create multiple IMAP folders at once. Parent folders are auto-created. Delimiter defaults to '.' (one.com) — use '/' for Gmail.",
   {
@@ -1198,7 +1206,7 @@ function appendHtmlSignature(body, signature) {
 // ----------------------------------------------------------------------------
 // Tool: smtp_send_email
 // ----------------------------------------------------------------------------
-mcpServer.tool(
+tool(
   "smtp_send_email",
   "Send an email via SMTP. Signature is auto-appended when account.signature is configured (set SIGNATURE_<ACCOUNT> env var). Use noSignature=true to suppress. For replies that should stay in-thread, use smtp_reply instead.",
   {
@@ -1306,7 +1314,7 @@ async function fetchOriginalForReply(account, folder, uid) {
 // ----------------------------------------------------------------------------
 // Tool: smtp_reply
 // ----------------------------------------------------------------------------
-mcpServer.tool(
+tool(
   "smtp_reply",
   "Reply to an existing email keeping the IMAP thread intact (sets In-Reply-To + References, prefixes subject with AW:, optionally quotes the original). Reads the original via IMAP using replyToUid.",
   {
@@ -1443,7 +1451,7 @@ app.get("/version", (req, res) => {
 
 // List configured accounts
 app.get("/accounts", requireApiKey, (req, res) => {
-  const accounts = getConfiguredAccounts();
+  const accounts = visibleAccounts(req.apiAccounts);
   res.json({
     success: true,
     accounts: accounts.map((a) => ({
@@ -1461,6 +1469,7 @@ app.get("/test/:account", requireApiKey, async (req, res) => {
   let imap;
 
   try {
+    if (!isAccountAllowed(req.apiAccounts, account)) throw new Error(`Account '${account}' not configured`);
     imap = createImapConnection(account);
     await connectImap(imap);
 
@@ -1486,10 +1495,31 @@ app.get("/test/:account", requireApiKey, async (req, res) => {
   }
 });
 
+// Lagebild (Task wq7): eigener Schlüssel, ein festes Lesewerkzeug für post@. Steht VOR
+// /mcp und beantwortet seine Requests selbst — MCP_API_KEYS öffnen /mcp/lagebild nicht
+// und der Lagebild-Schlüssel nicht /mcp.
+async function listPostInbox(top) {
+  const imap = createImapConnection("post");
+  try {
+    await connectImap(imap);
+    await openMailbox(imap, "INBOX", true); // read-only: setzt kein \Seen
+    const uids = await searchEmails(imap, ["ALL"]);
+    return await fetchEmails(imap, uids.slice(-top));
+  } finally {
+    imap.end();
+  }
+}
+
+const lagebild = makeLagebildRouter({ keysSpec: process.env.LAGEBILD_API_KEYS, listInbox: listPostInbox });
+if (lagebild) {
+  app.use("/mcp/lagebild", lagebild);
+  console.log("[Lagebild] /mcp/lagebild aktiv");
+}
+
 // MCP Endpoint with multi-key auth.
 // Per-request McpServer + transport — see buildMcpServer() comment above.
 app.all("/mcp", requireApiKey, async (req, res) => {
-  const reqServer = buildMcpServer();
+  const reqServer = buildMcpServer(req.apiAccounts ?? null);
   const transport = new StreamableHTTPServerTransport({
     sessionIdGenerator: undefined,
   });
