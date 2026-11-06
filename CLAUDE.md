@@ -60,6 +60,8 @@ Both `smtp_send_email` and `smtp_reply` accept an optional `attachments` array. 
 - exactly one of `path` (absolute server path, must lie under `ATTACHMENT_WHITELIST_DIRS`) or `content` (base64-encoded payload)
 - optional `contentType` (auto-detected from filename if omitted)
 
+**Size limit:** `/mcp` accepts request bodies up to `MCP_BODY_LIMIT` (default `15mb`, enough for a 10 MB file as base64). The large parser sits *after* `requireApiKey`, so unauthenticated requests never get parsed. Everything else (incl. `/mcp/lagebild`) keeps Express' 100 KB default. Before 06.11.2026 `/mcp` had 100 KB too, and attachments above ~75 KB failed with HTTP 413. See `src/body-limit.mjs`.
+
 `ATTACHMENT_WHITELIST_DIRS` is a comma-separated list of absolute directories. Empty/unset means the `path` form is rejected — only base64 `content` works in that case. This guards against arbitrary file reads via the MCP.
 
 ### Sent-Folder Copy

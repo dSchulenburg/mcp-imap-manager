@@ -8,6 +8,7 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import { z } from "zod";
 import { config, getConfiguredAccounts } from "./config.mjs";
 import { generalLimiter, mcpLimiter, healthLimiter } from "./rate-limit.mjs";
+import { smallJsonExceptMcp, mcpJson } from "./body-limit.mjs";
 import { requireApiKey } from "./auth.mjs";
 import { guardedTool, isAccountAllowed } from "./account-guard.mjs";
 import { makeLagebildRouter } from "./lagebild.mjs";
@@ -31,7 +32,8 @@ app.use(cors({
   methods: ['GET', 'POST', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'x-api-key', 'Authorization']
 }));
-app.use(express.json());
+// 100 KB global, /mcp bekommt den grossen Parser erst nach der Auth (src/body-limit.mjs).
+app.use(smallJsonExceptMcp);
 
 // Rate Limiting
 app.use(generalLimiter);
@@ -1518,7 +1520,7 @@ if (lagebild) {
 
 // MCP Endpoint with multi-key auth.
 // Per-request McpServer + transport — see buildMcpServer() comment above.
-app.all("/mcp", requireApiKey, async (req, res) => {
+app.all("/mcp", requireApiKey, mcpJson, async (req, res) => {
   const reqServer = buildMcpServer(req.apiAccounts ?? null);
   const transport = new StreamableHTTPServerTransport({
     sessionIdGenerator: undefined,
